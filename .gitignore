@@ -40,3 +40,6 @@ data/ledger.xlsx.bak*
 *.swp
 .DS_Store
 Thumbs.db
+
+# ── Local-only notes (never published) ────────────────────
+Details.md
