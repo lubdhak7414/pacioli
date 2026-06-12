@@ -171,8 +171,8 @@ ai_accountant/
 ├── static/
 │   └── index.html              # Dashboard frontend (Tailwind CSS)
 ├── requirements.txt            # Python dependencies
-├── PLAN.md                     # Original design blueprint
-├── PLAN2.md                    # Improvement roadmap
+├── PLAN.md                     # Remaining work / roadmap
+├── CONTRIBUTING.md             # Dev setup & contribution guide
 ├── HANDOFF.md                  # Project handoff document
 └── README.md                   # This file
 ```

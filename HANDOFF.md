@@ -50,7 +50,7 @@ ai_accountant/
 ├── static/
 │   └── index.html              # Dashboard frontend (495 lines)
 ├── requirements.txt
-├── PLAN.md                     # Original design blueprint
+├── PLAN.md                     # Remaining work / roadmap
 └── HANDOFF.md                  # This file
 ```
 
