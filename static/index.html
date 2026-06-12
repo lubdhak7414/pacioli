@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Accountant</title>
+    <title>Pacioli</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link
@@ -72,9 +72,9 @@
     <!-- Header -->
     <header class="border-b border-ledger-border px-6 py-4 flex items-center justify-between shrink-0">
       <div class="flex items-center gap-3">
-        <div class="w-8 h-8 rounded-lg bg-ledger-accent flex items-center justify-center text-white font-bold text-sm">AI</div>
+        <div class="w-8 h-8 rounded-lg bg-ledger-accent flex items-center justify-center text-white font-bold text-sm">P</div>
         <div>
-          <h1 class="text-lg font-semibold text-white">AI Accountant</h1>
+          <h1 class="text-lg font-semibold text-white">Pacioli</h1>
           <p class="text-xs text-gray-500">Human-in-the-Loop Ledger Management</p>
         </div>
       </div>
@@ -105,7 +105,7 @@
           <div class="fade-up flex gap-3" id="greetingMsg">
             <div class="w-7 h-7 rounded-full bg-ledger-accent/20 flex items-center justify-center text-xs text-ledger-accent shrink-0 mt-0.5">AI</div>
             <div class="bg-ledger-surface border border-ledger-border rounded-xl px-4 py-3 max-w-[85%]">
-              <p class="text-sm mb-3">Hello! I'm your AI accountant. I can record transactions, generate reports, and manage your general ledger. What would you like to do?</p>
+              <p class="text-sm mb-3">Hello! I'm Pacioli. I can record transactions, generate reports, and manage your general ledger. What would you like to do?</p>
               <div id="examplePrompts" class="flex flex-col gap-2">
                 <button onclick="sendExample('Record a $1,000 cash payment for office supplies')"
                   class="text-left text-xs px-3 py-2 rounded-lg border border-ledger-border bg-ledger-bg hover:border-ledger-accent hover:text-white transition text-gray-400">
@@ -126,10 +126,6 @@
 
         <!-- Input area -->
         <div class="p-4 border-t border-ledger-border shrink-0">
-          <div id="loadingBanner" class="hidden mb-3 flex items-center gap-2 text-xs text-gray-400">
-            <div class="w-3 h-3 border-2 border-ledger-accent border-t-transparent rounded-full spinner shrink-0"></div>
-            <span id="loadingText">AI is analyzing your request...</span>
-          </div>
           <form id="chatForm" class="flex gap-2">
             <input
               type="text"
@@ -208,8 +204,6 @@
       const proposalEmpty   = document.getElementById("proposalEmpty");
       const proposalContent = document.getElementById("proposalContent");
       const searchInput     = document.getElementById("searchInput");
-      const loadingBanner   = document.getElementById("loadingBanner");
-      const loadingText     = document.getElementById("loadingText");
 
       var currentProposalId = null;
       var historyOpen = false;
@@ -281,16 +275,17 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
 
-      // Loading state
+      // Loading state — disables controls and runs the safety timers.
+      // The single visual cue is the typing indicator (showTyping); the banner
+      // was removed to avoid showing two redundant "AI is working" affordances.
       var _t10, _t60;
       function showLoading() {
-        loadingBanner.classList.remove("hidden");
-        loadingText.textContent = "AI is analyzing your request...";
         sendBtn.disabled = true;
         chatInput.disabled = true;
 
         _t10 = setTimeout(function() {
-          loadingText.textContent = "Still thinking... this may take a moment.";
+          var cap = document.getElementById("typingCaption");
+          if (cap) { cap.textContent = "Still thinking…"; cap.classList.remove("hidden"); }
         }, 10000);
 
         _t60 = setTimeout(function() {
@@ -303,22 +298,22 @@
       function hideLoading() {
         clearTimeout(_t10);
         clearTimeout(_t60);
-        loadingBanner.classList.add("hidden");
         sendBtn.disabled = false;
         chatInput.disabled = false;
       }
 
-      // Typing indicator
+      // Typing indicator (the one "AI is typing…" cue)
       function showTyping() {
         var el = document.createElement("div");
         el.id = "typingIndicator";
         el.className = "fade-up flex gap-3";
         el.innerHTML =
           '<div class="w-7 h-7 rounded-full bg-ledger-accent/20 flex items-center justify-center text-xs text-ledger-accent shrink-0">AI</div>' +
-          '<div class="bg-ledger-surface border border-ledger-border rounded-xl px-4 py-3">' +
+          '<div class="bg-ledger-surface border border-ledger-border rounded-xl px-4 py-3 flex items-center">' +
             '<span class="typing-dot inline-block w-2 h-2 bg-gray-500 rounded-full mr-1"></span>' +
             '<span class="typing-dot inline-block w-2 h-2 bg-gray-500 rounded-full mr-1"></span>' +
             '<span class="typing-dot inline-block w-2 h-2 bg-gray-500 rounded-full"></span>' +
+            '<span id="typingCaption" class="text-xs text-gray-500 ml-2 hidden"></span>' +
           '</div>';
         chatMessages.appendChild(el);
         chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -352,10 +347,14 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message: msg }),
           });
-          var data = await res.json();
 
           hideTyping();
           hideLoading();
+          if (!res.ok) {
+            addMessage("assistant", "Server error (" + res.status + "). Please try again.");
+            return;
+          }
+          var data = await res.json();
           addMessage("assistant", data.assistant_message, data.proposal_id);
 
           if (data.proposal_id) {
@@ -372,6 +371,7 @@
       async function loadProposal(id) {
         try {
           var res = await fetch("/api/proposals/" + id);
+          if (!res.ok) throw new Error("HTTP " + res.status);
           var p = await res.json();
 
           currentProposalId = p.status === "pending" ? id : null;
@@ -472,11 +472,20 @@
       }
 
       // Approve proposal
+      var _approving = false;
       async function approveProposal(id) {
+        if (_approving) return;   // guard against double-submit (e.g. Ctrl+Y twice)
+        _approving = true;
         var btns = document.getElementById("approvalButtons");
         btns.innerHTML = '<p class="text-sm text-gray-500 animate-pulse">Executing...</p>';
         try {
           var res = await fetch("/api/proposals/" + id + "/approve", { method: "POST" });
+          if (!res.ok) {
+            var errBody = await res.json().catch(function() { return {}; });
+            btns.innerHTML = '<p class="text-sm text-ledger-danger">Execution failed</p>';
+            showToast(errBody.detail || ("Approve failed (" + res.status + ")"), "error");
+            return;
+          }
           var data = await res.json();
           var result = document.getElementById("approvalResult");
           result.classList.remove("hidden");
@@ -501,6 +510,8 @@
         } catch (err) {
           btns.innerHTML = '<p class="text-sm text-ledger-danger">Request failed</p>';
           showToast("Could not reach the server", "error");
+        } finally {
+          _approving = false;
         }
       }
 
@@ -510,6 +521,12 @@
         btns.innerHTML = '<p class="text-sm text-gray-500 animate-pulse">Rejecting...</p>';
         try {
           var res = await fetch("/api/proposals/" + id + "/reject", { method: "POST" });
+          if (!res.ok) {
+            var errBody = await res.json().catch(function() { return {}; });
+            btns.innerHTML = '<p class="text-sm text-ledger-danger">Reject failed</p>';
+            showToast(errBody.detail || ("Reject failed (" + res.status + ")"), "error");
+            return;
+          }
           var data = await res.json();
           var result = document.getElementById("approvalResult");
           result.classList.remove("hidden");
