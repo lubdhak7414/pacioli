@@ -1,5 +1,7 @@
 """Execution safety nets: account validation, double-entry, running balance, formatting."""
 
+import os
+
 import openpyxl
 import pytest
 
@@ -72,3 +74,37 @@ def test_restore_snapshot_roundtrip(ledger):
     wb = openpyxl.load_workbook(ledger)
     assert wb["GeneralLedger"].max_row == 8   # back to original
     wb.close()
+
+
+def test_execute_returns_restorable_snapshot(ledger):
+    """execute_actions returns the pre-execution snapshot, captured under the lock."""
+    snapshot, change_log = ledger_engine.execute_actions([
+        _row(9, "1010", "Cash", 500, 0),
+        _row(10, "1200", "Accounts Receivable", 0, 500),
+    ])
+    assert isinstance(snapshot, bytes) and change_log
+
+    wb = openpyxl.load_workbook(ledger)
+    assert wb["GeneralLedger"].max_row == 10
+    wb.close()
+
+    # Restoring the returned snapshot undoes the change — proving it is pre-state.
+    ledger_engine.restore_snapshot(snapshot)
+    wb = openpyxl.load_workbook(ledger)
+    assert wb["GeneralLedger"].max_row == 8
+    wb.close()
+
+
+def test_execute_leaves_no_temp_file(ledger):
+    """The atomic write swaps in via .tmp; it must not linger afterwards."""
+    ledger_engine.execute_actions([
+        _row(9, "1010", "Cash", 500, 0),
+        _row(10, "1200", "Accounts Receivable", 0, 500),
+    ])
+    assert not os.path.exists(ledger + ".tmp")
+
+
+def test_get_chart_text_lists_accounts(ledger):
+    text = ledger_engine.get_chart_text()
+    assert "1010 Cash (Asset)" in text
+    assert "4100 Service Revenue (Revenue)" in text
