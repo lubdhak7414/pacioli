@@ -1,354 +1,247 @@
-# 🧮 AI Accountant
+# Pacioli
 
-> A human-in-the-loop AI accounting ledger. Chat in natural language, review proposed changes, approve with one click.
+**A deterministic double-entry ledger engine with a human-in-the-loop AI proposal layer.**
 
-**Status:** Functional MVP · **Stack:** FastAPI + Gemini 2.5 Flash + SQLite + openpyxl + Tailwind CSS
-
----
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                       Browser (Dashboard)                        │
-│  ┌───────────────┐  ┌─────────────────┐  ┌───────────────────┐  │
-│  │  Chat Panel   │  │ Proposal Preview │  │ Approve / Reject  │  │
-│  │  (send msg)   │  │  (diff + reason) │  │    Buttons        │  │
-│  └───────┬───────┘  └────────▲────────┘  └────────┬──────────┘  │
-└──────────┼───────────────────┼────────────────────┼──────────────┘
-           │  POST /api/chat   │  GET /api/proposals│  POST /approve
-           ▼                   │                    ▼
-┌──────────────────────────────┼──────────────────────────────────┐
-│              FastAPI Backend  (main.py)                          │
-│                                                                  │
-│  ┌──────────┐    ┌──────────┐    ┌─────────────────────────┐    │
-│  │/api/chat │───▶│ Gemini   │───▶│ Pydantic Validation      │    │
-│  │ handler  │    │ 2.5 Flash│    │ (double-entry check)     │    │
-│  └──────────┘    └──────────┘    └────────────┬────────────┘    │
-│                                               │                  │
-│  ┌──────────────┐    ┌──────────┐    ┌────────▼────────────┐    │
-│  │/api/approve  │───▶│ Snapshot │───▶│ openpyxl Execute     │    │
-│  │ handler      │    │ (backup) │    │ (write to .xlsx)     │    │
-│  └──────────────┘    └──────────┘    └─────────────────────┘    │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │ SQLite: proposals · chat_messages · ledger_snapshots     │    │
-│  │ Disk:   data/ledger.xlsx (source of truth)               │    │
-│  └──────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
-```
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-async-009688.svg)](https://fastapi.tiangolo.com/)
+[![SQLite](https://img.shields.io/badge/state-SQLite%20WAL-003B57.svg)](https://www.sqlite.org/)
+[![Lint](https://img.shields.io/badge/lint-ruff-261230.svg)](https://docs.astral.sh/ruff/)
+[![CI](https://img.shields.io/badge/CI-ruff%20%2B%20pytest-success.svg)](.github/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
 
-## Features
+## Overview
 
-**Chat & Propose**
-- Natural language input: "Record a $3,500 payment from a client"
-- AI generates a structured double-entry proposal with debit/credit breakdown
-- Validation ensures debits equal credits before anything is saved
+Pacioli is a bookkeeping system that lets an operator drive a double-entry Excel ledger through natural language, **without ever delegating financial correctness to a language model.**
 
-**Review & Approve**
-- Side-by-side proposal preview with old vs new values
-- Approve to execute, reject to cancel — the ledger never changes without your permission
-- Every approval creates a snapshot for potential rollback
+The design premise is narrow and deliberate: large language models are excellent at *parsing intent* and *structuring* an instruction into well-formed accounting actions, and unreliable at *arithmetic* and *state mutation*. Pacioli draws that line explicitly. The model is confined to producing a structured, schema-validated **proposal**. Every figure in a report, every balance check, and every byte written to disk is computed and gated by deterministic Python.
 
-**Report & Verify**
-- Ask for a Balance Sheet, Trial Balance, or P&L statement in chat
-- Download the raw `ledger.xlsx` at any time to verify in Excel
+Nothing the model emits touches the ledger until a human approves it, and anything that *is* approved can be reverted in one call. The result is a system where the AI is a convenience at the edge, not a dependency in the critical path.
 
-**Safety Nets**
-- Retry logic: AI self-corrects on validation errors (up to 2 retries)
-- Proposal expiration: stale pending proposals auto-expire after 15 minutes
-- Snapshot backup: every edit preserves a full copy of the ledger before changes
+**What it is**
+- A FastAPI service wrapping an `openpyxl`-backed Excel ledger.
+- A proposal/approval state machine persisted in SQLite.
+- A deterministic reporting engine (Trial Balance, Income Statement, Balance Sheet).
+- A reversible execution layer with per-proposal snapshots and an audit trail.
+
+**What it is not**
+- It is not an "AI wrapper." The LLM produces *candidate* edits; it has no write authority and is not trusted for any numeric output.
+
+---
+
+## Architecture & System Design
+
+Pacioli's reliability properties come from four design decisions, each enforced in code rather than convention.
+
+### 1. Self-correcting LLM integration
+
+The model boundary is treated as an unreliable network dependency and a source of malformed output — and handled on both axes.
+
+**Transport resilience** (`ai_client.py`) — every call runs inside `asyncio.wait_for` with a hard timeout (`AI_TIMEOUT`, default 45s), executed off the event loop via `asyncio.to_thread`. A single `_call_with_retry` helper classifies failures: timeouts and transient API errors (`429`, `5xx`, `UNAVAILABLE`, `RESOURCE_EXHAUSTED`) are retried with linear backoff, while non-transient errors (auth, bad request) fail fast on the first attempt. The response is then guarded on three fronts — an empty/blocked candidate (`response.text` is `None` or raises), a `JSONDecodeError`/`TypeError` on parse, and a shape check that rejects any `proposal` that is not a JSON object. Every one of these fails closed with an actionable message rather than propagating a half-parsed structure downstream.
+
+**Semantic self-correction** (`main.py` → `/api/chat`) — structured output is validated against the Pydantic `Proposal` schema, and validation is a feedback loop, not a dead end. When validation fails, the exact validator error is appended back into the next prompt as explicit `SYSTEM FEEDBACK`, and the model is asked to repair its own output. This runs up to `MAX_RETRIES` (default 2) times before surfacing a graceful failure to the operator:
+
+```text
+[SYSTEM FEEDBACK — fix these validation errors and retry:]
+write_cell requires cell_ref and new_value
+Remember: insert_row needs row_index+values; debits must equal credits.
+```
+
+This converts the LLM's most common failure mode — *almost*-valid JSON — from a hard error into a recoverable round-trip.
+
+### 2. Deterministic math (the model never reports a number)
+
+Financial figures are never read out of the model's response. `report_engine.py` recomputes every report directly from the `GeneralLedger` rows:
+
+- Debits and credits are summed per account from the source-of-truth sheet.
+- Normal-balance direction is resolved from the `ChartOfAccounts` account type (`asset/expense/cogs` are debit-normal; `liability/equity/revenue` are credit-normal).
+- Column positions are **detected from header names**, never hardcoded, so the engine survives schema reordering.
+- Each report carries its own self-consistency assertion — a Trial Balance reports `balanced` only when debits and credits agree to within a cent; the Balance Sheet only when `Assets == Liabilities + Equity`.
+
+The LLM's role in reporting is reduced to a single token of intent ("show me the balance sheet"); the numbers are Python's. If a requested report type isn't one Pacioli can compute, it falls back to the model's structure but labels it **explicitly as estimated** — hallucinated figures are never silently presented as authoritative.
+
+### 3. Data integrity & concurrency
+
+The write path is defended in depth, and the ordering of those defenses matters.
+
+- **Atomic state transition.** Approval is a single conditional SQL update — `UPDATE … SET status='executed' WHERE id=? AND status='pending'` (`db.approve_proposal_atomic`). The double-approval race is closed at the database, not in application logic: a losing concurrent request observes `rowcount == 0` and receives a `409 Conflict`.
+- **Serialized, atomic file I/O.** Every Excel read-modify-write and every restore runs under a cross-process `FileLock` (`filelock`), so concurrent execution can never interleave writes to `ledger.xlsx`. The lock degrades gracefully to a no-op only if the dependency is absent. Within the lock, the workbook is written to a `.tmp` file and swapped in via `os.replace` — an atomic rename — so a crash mid-save leaves either the complete old file or the complete new one, never a torn `.xlsx`. If the lock can't be acquired in time, the approval route catches the `LockTimeout`, returns the proposal to `pending`, and responds `409` so the operator can simply retry.
+- **Double-entry pre-flight.** Before any cell is touched, `_check_double_entry` sums the proposed debit and credit columns — located **by header name**, not fixed position, so it stays correct if the ledger columns are reordered — and **aborts the entire batch** if they diverge by more than a cent. The same invariant is enforced at the schema layer by `Proposal.enforce_debit_equals_credit`.
+- **Referential integrity, prevented *and* enforced.** The valid Chart of Accounts is rendered from the live workbook (`get_chart_text`) and injected into the system prompt at request time, so the model sees the authoritative account list rather than a hardcoded copy that could drift. Should it propose an account anyway, inserted rows are still validated against the live `ChartOfAccounts` at write time (unknown numbers are rejected with the valid set echoed back), and `_validate_cell_bounds` refuses writes far outside the populated region to contain out-of-range coordinates.
+- **Input and formula hardening.** Incoming messages are stripped of injected role tags and flagged for injection patterns (`sanitize_input`); proposed formulas must begin with `=` and are rejected if they contain dangerous tokens (`SYSTEM`, `EXEC`, `SHELL`, `IMPORT`, …). Monetary values are rounded to two decimal places at the schema boundary *and* at write time.
+
+### 4. State reversibility (one-click undo)
+
+Every execution captures a full, byte-exact snapshot of the ledger. Crucially, `execute_actions` takes that snapshot **inside the same file lock** that guards the write, immediately before mutating anything — so the captured bytes are always a consistent pre-execution state, never a copy caught mid-write by a concurrent operation. It returns the snapshot alongside the change log, and `db.save_snapshot()` persists it as a `BLOB` in the `ledger_snapshots` table, keyed to the proposal. Because the snapshot is the *entire file* rather than a computed diff, restoration is total and lossless:
+
+```
+POST /api/proposals/{id}/restore
+   └─ fetch snapshot BLOB for proposal {id}
+      └─ FileLock → write .tmp → os.replace(ledger.xlsx) → invalidate caches
+         └─ write audit_log row:  executed → restored
+```
+
+`restore_snapshot()` writes the stored bytes back through the same atomic `.tmp` → `os.replace` swap under the file lock, invalidates the summary/column caches, and records the rollback in the audit log. Any executed change is therefore reversible from the UI in a single action. As a second line of defense, the service also rotates timestamped ledger backups on startup (last 10 retained).
 
 ---
 
 ## Tech Stack
 
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| Backend | FastAPI | ≥0.115 |
-| Database | SQLite via aiosqlite | ≥0.20 |
-| AI Model | Google Gemini 2.5 Flash | via google-genai ≥2.0 |
-| Ledger Engine | openpyxl | ≥3.1 |
-| Validation | Pydantic v2 | ≥2.10 |
-| Frontend | Tailwind CSS (CDN) + vanilla JS | — |
-| Runtime | Python | 3.10+ (tested on 3.14) |
+| Layer | Choice | Role |
+|---|---|---|
+| API | **FastAPI** + Uvicorn | Async HTTP, lifespan-managed startup/shutdown, request logging |
+| State | **SQLite** via `aiosqlite` (WAL mode) | Proposals, chat history, snapshot BLOBs, audit log |
+| Ledger | **openpyxl** | Read/write of the source-of-truth `ledger.xlsx` |
+| Concurrency | **filelock** | Cross-process serialization of ledger I/O |
+| Validation | **Pydantic v2** | Schema enforcement and the self-correction feedback contract |
+| LLM | **Google Gemini 2.5 Flash** (`google-genai`) | Intent parsing → structured proposals (JSON mode) |
+| Frontend | Static HTML + Tailwind CSS | Proposal review & ledger preview dashboard |
+| Quality | **ruff** + **pytest** (GitHub Actions CI) | Lint, compile check, test suite |
 
 ---
 
-## Quick Start
+## Local Installation & Quick Start
 
-### Prerequisites
-
-- Python 3.10 or higher
-- A Google API key ([get one free](https://aistudio.google.com/apikey))
-
-### Installation
+**Prerequisites:** Python 3.11+ and a Google AI Studio API key ([aistudio.google.com/apikey](https://aistudio.google.com/apikey)).
 
 ```bash
-# Clone the repository
-git clone <your-repo-url>
-cd ai_accountant
-
-# Install dependencies
+# 1. Install dependencies
 pip install -r requirements.txt
-```
 
-### Configuration
+# 2. Provide your API key (and any config overrides)
+export GOOGLE_API_KEY="your-key-here"     # Linux/macOS
+# $env:GOOGLE_API_KEY="your-key-here"     # PowerShell
 
-Set your Google API key as an environment variable:
-
-```bash
-# Linux / macOS
-export GOOGLE_API_KEY="your-key-here"
-
-# Windows PowerShell
-$env:GOOGLE_API_KEY="your-key-here"
-
-# Windows CMD
-set GOOGLE_API_KEY=your-key-here
-```
-
-### Launch
-
-```bash
+# 3. Run the service (the live ledger is auto-seeded from the template on first run)
 uvicorn main:app --port 8000 --reload
+
+# 4. Open the dashboard
+#    http://localhost:8000
 ```
 
-Open **http://localhost:8000** in your browser.
+On first start, Pacioli seeds the working ledger at `data/ledger.xlsx` by copying the committed **`data/ledger.template.xlsx`** — no manual step required. The SQLite state store is created the same way.
 
-> The SQLite database (`data/accountant.db`) and Excel ledger (`data/ledger.xlsx`) are created automatically on first run.
+Configuration is centralized in `config.py` and fully overridable via environment variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GOOGLE_API_KEY` | _(required)_ | Gemini API credential |
+| `AI_MODEL` | `gemini-2.5-flash` | Model identifier |
+| `AI_TEMPERATURE` | `0.2` | Low temperature for structural determinism |
+| `AI_TIMEOUT` | `45` | Hard request timeout (seconds) |
+| `MAX_RETRIES` | `2` | Validation self-correction attempts |
+| `LEDGER_PATH` | `data/ledger.xlsx` | Live ledger (gitignored — holds real data) |
+| `LEDGER_TEMPLATE_PATH` | `data/ledger.template.xlsx` | Committed starter workbook used to seed the ledger |
+| `DB_PATH` | `data/accountant.db` | SQLite state store |
+| `FISCAL_YEAR` | `2026` | Drives out-of-period transaction warnings |
+| `MAX_INPUT_LENGTH` | `500` | Input cap (defense-in-depth) |
+
+A container build is provided via the included `Dockerfile`. Run the test suite with `pytest`.
+
+### Data & state
+
+The repository ships a clean **`data/ledger.template.xlsx`** (chart of accounts + an empty general ledger). Your actual ledger lives at `data/ledger.xlsx`, which is **gitignored** — it carries real financial data and must never be committed. To reset to a clean slate, delete `data/ledger.xlsx` and restart; it will be re-seeded from the template. The SQLite store (`data/accountant.db`) and timestamped startup backups are gitignored too.
 
 ---
 
-## Usage Walkthrough
+## The Human-in-the-Loop Workflow
 
-### 1. Send a message
-
-Type in the chat:
+No ledger mutation occurs without an explicit human approval. A proposal moves through a strict state machine — `pending → executed`, or one of the terminal exits — and the transition into execution is atomic.
 
 ```
-Record a $3,500 payment received from a client for software development services
+            ┌─────────────┐
+  user msg  │  /api/chat  │  parse intent → Pydantic-validated Proposal
+ ─────────► │             │  (self-correcting retry on validation failure)
+            └──────┬──────┘
+                   │  store proposal
+                   ▼
+            ┌─────────────┐
+            │   PENDING   │◄──── operator reviews diff via /api/proposals/{id}
+            └──┬───────┬──┘      (old value → new value, per cell)
+       approve │       │ reject / expire (>15 min, auto)
+               ▼       ▼
+   snapshot ledger   REJECTED ─── ledger untouched
+   → BLOB in SQLite
+               │
+   atomic UPDATE pending→executed   (409 if already acted on)
+               │
+   execute_actions() under FileLock
+   ├─ double-entry pre-flight
+   ├─ account-number + bounds checks
+   ├─ write cells, recalc running balance, save .xlsx
+   └─ append audit_log rows
+               ▼
+            ┌─────────────┐
+            │  EXECUTED   │──── reversible via /api/proposals/{id}/restore
+            └─────────────┘
 ```
 
-### 2. Review the proposal
-
-The AI generates a proposal with two journal entries:
-
-| Cell | Action | Value |
-|------|--------|-------|
-| GeneralLedger row 3 | **Debit** Cash (1010) | $3,500 |
-| GeneralLedger row 4 | **Credit** Service Revenue (4100) | $3,500 |
-
-The proposal panel shows the summary, reasoning, and a preview of every cell change.
-
-### 3. Approve or reject
-
-- Click **Approve & Execute** — the changes are written to `data/ledger.xlsx`
-- Click **Reject** — nothing changes, the proposal is marked as rejected
-
-### 4. Verify
-
-- Download `ledger.xlsx` via the link in the header
-- Or ask the AI: "Show me the Cash balance" or "Generate a Trial Balance"
+1. **Propose.** `/api/chat` sanitizes the message, builds ledger context, and obtains a schema-valid proposal from the model (self-correcting on failure). A read-only request returns a *computed* report instead and never creates a proposal.
+2. **Review.** The operator inspects the proposal via `/api/proposals/{id}`, which renders a per-cell `old → new` diff plus any non-blocking warnings (e.g. a transaction dated outside the fiscal year).
+3. **Decide.** Approve, reject, or let it expire. Stale proposals are auto-rejected after 15 minutes by a background task.
+4. **Execute.** On approval, the ledger is snapshotted, the status is flipped atomically, and the actions run under the file lock with the full validation chain. Every cell write is recorded in the audit log.
+5. **Revert (optional).** `/api/proposals/{id}/restore` rolls the ledger back to its exact pre-execution bytes.
 
 ---
 
-## Project Structure
+## Supported Operations
 
-```
-ai_accountant/
-├── main.py                     # FastAPI app, API endpoints
-├── ai_client.py                # Gemini SDK wrapper (timeout + retry)
-├── models.py                   # Shared Pydantic models & validation
-├── report_engine.py            # Reports computed from real ledger data
-├── db.py                       # SQLite async database layer
-├── ledger_engine.py            # openpyxl read/write/snapshot engine
-├── config.py                   # Central config (env-overridable)
-├── prompts/
-│   └── system_accountant.txt   # System prompt for the AI model
-├── data/
-│   ├── ledger.xlsx             # The source-of-truth Excel ledger
-│   └── accountant.db           # SQLite: proposals, chat, snapshots, audit
-├── static/
-│   └── index.html              # Dashboard frontend (Tailwind CSS)
-├── tests/                      # pytest suite (report/ledger/models/sanitize)
-├── .github/workflows/ci.yml    # GitHub Actions: ruff + py_compile + pytest
-├── Dockerfile                  # Containerised run
-├── requirements.txt            # Runtime dependencies
-├── requirements-dev.txt        # + pytest, ruff
-├── .env.example                # Environment variable reference
-├── PLAN.md                     # Roadmap / status
-├── CONTRIBUTING.md             # Dev setup & contribution guide
-├── HANDOFF.md                  # Project handoff document
-└── README.md                   # This file
-```
+The model may only emit actions from a closed vocabulary, each with enforced required fields (`models.py`):
 
----
+| Operation | Description | Required fields |
+|---|---|---|
+| `insert_row` | Insert a new transaction row (preferred for journal entries) | `sheet`, `row_index`, `values` |
+| `write_cell` | Write a single cell value | `sheet`, `cell_ref`, `new_value` |
+| `write_formula` | Set a cell formula (must start with `=`, dangerous tokens rejected) | `sheet`, `cell_ref`, `formula` |
+| `write_range` | Write a rectangular block of cells | `sheet`, `start_cell`, `end_cell`, `values_2d` |
 
-## Configuration
+**Computed reports** (numbers derived from the ledger, never from the model):
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GOOGLE_API_KEY` | *(required)* | Google API key for Gemini model access |
-| `APP_PASSWORD` | *(none)* | Shared password for app access (if set) |
-| `AI_MODEL` | `gemini-2.5-flash` | Gemini model to use |
-| `AI_TEMPERATURE` | `0.2` | Model temperature (lower = more deterministic) |
-| `MAX_RETRIES` | `2` | Retries when AI returns invalid JSON |
-| `LOG_LEVEL` | `INFO` | Python logging level |
-| `TAX_RATE` | `0.0` | Default tax rate for transactions |
-| `FISCAL_YEAR` | `2025` | Current fiscal year for date validation |
+| Report | Self-consistency guarantee |
+|---|---|
+| Trial Balance | Total debits == total credits |
+| Income Statement | Net income = revenue − expenses |
+| Balance Sheet | Assets == Liabilities + Equity (incl. current-period net income) |
 
----
-
-## API Reference
+### HTTP API
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/` | Serve the dashboard |
-| `POST` | `/api/chat` | Send a message → get AI response + proposal |
-| `GET` | `/api/chat/history` | Get chat message history |
-| `GET` | `/api/proposals/{id}` | Get proposal details for preview |
-| `POST` | `/api/proposals/{id}/approve` | Approve & execute a proposal |
-| `POST` | `/api/proposals/{id}/reject` | Reject a proposal (no changes) |
-| `GET` | `/api/ledger/download` | Download the current ledger as .xlsx |
-| `GET` | `/api/health` | System health check |
-
-### Example: Send a chat message
-
-```bash
-curl -X POST http://localhost:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Record a $500 office supplies purchase"}'
-```
-
-Response:
-```json
-{
-  "assistant_message": "I've prepared a proposed edit for your review...",
-  "proposal_id": 1,
-  "proposal_summary": "Record $500 office supplies purchase"
-}
-```
-
-### Example: Approve a proposal
-
-```bash
-curl -X POST http://localhost:8000/api/proposals/1/approve
-```
-
-Response:
-```json
-{
-  "success": true,
-  "message": "Proposal executed successfully.",
-  "change_log": [
-    "[GeneralLedger] Inserted row 3 with 8 values",
-    "[GeneralLedger] Inserted row 4 with 8 values"
-  ]
-}
-```
+|---|---|---|
+| `GET` | `/api/health` | DB / model / ledger health |
+| `POST` | `/api/chat` | Submit a message → proposal or computed report |
+| `GET` | `/api/chat/history` | Full chat history |
+| `GET` | `/api/proposals` | List recent proposals |
+| `GET` | `/api/proposals/{id}` | Proposal detail with per-cell diff |
+| `POST` | `/api/proposals/{id}/approve` | Atomically approve & execute |
+| `POST` | `/api/proposals/{id}/reject` | Reject (no changes) |
+| `POST` | `/api/proposals/{id}/restore` | Restore pre-execution snapshot (undo) |
+| `GET` | `/api/audit` | Audit log of executed writes |
+| `GET` | `/api/ledger/preview` | Read-only JSON preview of a sheet |
+| `GET` | `/api/ledger/download` | Download the current `ledger.xlsx` |
 
 ---
 
-## Human-in-the-Loop Workflow
+## Project Layout
 
 ```
-         ┌──────────┐
-         │  pending  │  ← AI generates proposal
-         └────┬─────┘
-              │
-     ┌────────┴────────┐
-     ▼                  ▼
-┌──────────┐     ┌───────────┐
-│ executed │     │  rejected │  ← You decide
-└──────────┘     └───────────┘
-
-  On approve:
-    1. Snapshot current ledger (backup)
-    2. Execute all actions via openpyxl
-    3. Save ledger.xlsx
-    4. Mark proposal as "executed"
-
-  On reject:
-    1. Mark proposal as "rejected"
-    2. Ledger is untouched
-```
-
----
-
-## Example Prompts
-
-```
-# Record transactions
-Record a $3,500 payment received from a client for software development services
-Record a $500 office supplies purchase paid in cash
-We paid $2,400 for 3 months of rent
-Paid employee salary of $4,500 for June
-
-# Generate reports
-Generate a Balance Sheet
-Show me the Trial Balance
-What's the current Cash balance?
-
-# Ask questions
-How much revenue have we recorded?
-What are our total expenses?
-```
-
----
-
-## Known Limitations
-
-| Limitation | Impact | Workaround |
-|-----------|--------|------------|
-| No authentication | Anyone on the network can access | Run on localhost only; `APP_PASSWORD` gate is planned |
-| Single-user oriented | Concurrent writes are serialised with a file lock, not designed for many users | One person at a time for best results |
-| Tailwind via CDN | Not ideal for production deployment | Use a local Tailwind build for production |
-| Python 3.14 compatibility | Some dependency build issues on bleeding-edge Python | Use Python 3.11–3.12 for best compatibility |
-
-> **Reports are computed from the actual ledger** (`report_engine.py`) — Trial
-> Balance, Balance Sheet, and Income Statement are summed from real data, not
-> guessed by the AI. Only unrecognised report types fall back to AI estimates
-> (clearly labelled). Fiscal-period mismatches are flagged on each proposal, and
-> every executed change can be undone from the **Undo** button (snapshot restore).
-
----
-
-## Development
-
-```bash
-# Run with hot reload
-uvicorn main:app --port 8000 --reload
-
-# Run with verbose logging
-LOG_LEVEL=DEBUG uvicorn main:app --port 8000 --reload
-
-# Reset the database (start fresh)
-rm data/accountant.db
-```
-
-### Testing & linting
-
-```bash
-pip install -r requirements-dev.txt
-ruff check .        # lint
-pytest              # run the test suite
-```
-
-CI (`.github/workflows/ci.yml`) runs ruff, byte-compile, and pytest on every
-push and pull request across Python 3.11 and 3.12.
-
-### Docker
-
-```bash
-docker build -t ai-accountant .
-docker run -e GOOGLE_API_KEY=your-key -p 8000:8000 -v "$PWD/data:/app/data" ai-accountant
+pacioli/
+├── main.py            # FastAPI app: endpoints, approval state machine, self-correction loop
+├── ai_client.py       # Gemini transport: timeout + transient-error retry, empty/JSON/shape guards
+├── models.py          # Pydantic schema + double-entry / formula-safety validators
+├── report_engine.py   # Deterministic Trial Balance / Income Statement / Balance Sheet
+├── ledger_engine.py   # openpyxl I/O, FileLock, atomic save, snapshot/restore, double-entry pre-flight
+├── db.py              # Async SQLite: proposals, chat, snapshot BLOBs, audit log
+├── config.py          # Central, env-overridable configuration
+├── prompts/           # System prompt for the model
+├── static/            # Dashboard frontend
+├── tests/             # pytest suite (CI: ruff + py_compile + pytest)
+└── data/
+    └── ledger.template.xlsx   # Committed starter ledger (live ledger.xlsx is seeded from this, gitignored)
 ```
 
 ---
 
 ## License
 
-MIT
+Released under the [MIT License](LICENSE).
