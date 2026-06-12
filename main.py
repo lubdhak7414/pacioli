@@ -1,4 +1,4 @@
-"""AI Accountant — FastAPI backend with human-in-the-loop approval."""
+"""Pacioli — FastAPI backend with human-in-the-loop approval."""
 
 import asyncio
 import logging
@@ -61,6 +61,21 @@ def fiscal_warnings(actions) -> list[str]:
     return warnings
 
 
+def _trim_for_context(history: list[dict], max_chars: int = 600) -> list[dict]:
+    """Cap each chat turn before resending it to the model.
+
+    Assistant turns can include whole rendered report tables; re-feeding those
+    verbatim bloats the prompt for no benefit. Keep role + a bounded snippet.
+    """
+    trimmed = []
+    for m in history:
+        content = m["content"]
+        if len(content) > max_chars:
+            content = content[:max_chars] + " …[truncated]"
+        trimmed.append({"role": m["role"], "content": content})
+    return trimmed
+
+
 def _render_ai_report(report: dict) -> str:
     """Fallback renderer when the report type can't be computed locally."""
     text = f"**{report.get('title', 'Report')}**\n\n"
@@ -83,8 +98,17 @@ async def lifespan(app: FastAPI):
     await db.init_db()
     logger.info("Database initialised.")
 
-    # Backup ledger on startup (keep last 10)
+    # Seed the live ledger from the committed template on first run. The live
+    # file holds real financial data and is gitignored; the template is the
+    # clean starting workbook shipped with the repo.
     ledger_p = Path(ledger_engine.LEDGER_PATH)
+    template_p = Path(config.LEDGER_TEMPLATE_PATH)
+    if not ledger_p.exists() and template_p.exists():
+        ledger_p.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(template_p, ledger_p)
+        logger.info("Seeded ledger from template → %s", ledger_p)
+
+    # Backup ledger on startup (keep last 10)
     if ledger_p.exists():
         backups = sorted(Path("data").glob("ledger_backup_*.xlsx"))
         for old in backups[:-9]:
@@ -103,7 +127,7 @@ async def lifespan(app: FastAPI):
 
 # ── App ───────────────────────────────────────────────────────────
 app = FastAPI(
-    title="AI Accountant",
+    title="Pacioli",
     version="2.0.0",
     lifespan=lifespan,
     description="Human-in-the-loop AI-powered ledger management.",
@@ -149,9 +173,7 @@ class ChatResponse(BaseModel):
 class ProposalDetail(BaseModel):
     id: int
     status: str
-    summary: str
     justification: str
-    accounting_equation_check: dict
     actions: list[dict]
     user_message: str
     created_at: str
@@ -184,7 +206,7 @@ async def health_check():
 
 
 @app.post("/api/chat", response_model=ChatResponse,
-          summary="Send a message to the AI accountant")
+          summary="Send a message to Pacioli")
 async def chat(request: ChatRequest):
     """
     Full lifecycle:
@@ -199,6 +221,7 @@ async def chat(request: ChatRequest):
     await db.insert_chat_message("user", clean_msg)
     history = await db.get_chat_history(limit=20)
     ledger_summary = ledger_engine.get_ledger_summary()
+    chart_summary = ledger_engine.get_chart_text()
 
     last_error: str | None = None
 
@@ -214,9 +237,10 @@ async def chat(request: ChatRequest):
             )
 
         try:
-            ai_response = await ai_client.call_gemma(
+            ai_response = await ai_client.call_model(
                 ledger_summary=ledger_summary,
-                chat_history=history[:-1] if attempt == 0 else [],
+                chart_summary=chart_summary,
+                chat_history=_trim_for_context(history[:-1]) if attempt == 0 else [],
                 user_message=user_msg,
             )
         except Exception as e:
@@ -353,12 +377,7 @@ async def get_proposal(proposal_id: int):
     return ProposalDetail(
         id=proposal["id"],
         status=proposal["status"],
-        summary=proposal.get("ai_reasoning", "")[:200],
         justification=proposal.get("ai_reasoning", ""),
-        accounting_equation_check={
-            "assets_change": 0, "liabilities_change": 0,
-            "equity_change": 0, "balance_confirmed": True,
-        },
         actions=preview_actions,
         user_message=proposal["user_message"],
         created_at=proposal["created_at"],
@@ -380,32 +399,15 @@ async def approve_proposal(proposal_id: int):
             409, f"Proposal is already '{proposal['status']}', not 'pending'."
         )
 
-    snapshot = ledger_engine.take_snapshot()
-    await db.save_snapshot(proposal_id, snapshot)
-
     try:
-        change_log = ledger_engine.execute_actions(proposal["actions"])
-        # Persist an audit trail of what was executed (item 2.9)
-        for idx, act in enumerate(proposal["actions"]):
-            await db.insert_audit_log(
-                proposal_id=proposal_id,
-                action_index=idx,
-                sheet=act.get("sheet", ""),
-                cell_ref=act.get("cell_ref"),
-                old_value=act.get("old_value"),
-                new_value=act.get("new_value") or act.get("formula")
-                or act.get("values"),
-            )
-        await db.insert_chat_message(
-            "assistant",
-            f"Proposal #{proposal_id} approved and executed. "
-            f"Changes: {'; '.join(change_log)}",
-            proposal_id=proposal_id,
-        )
-        return ApprovalResponse(
-            success=True,
-            message="Proposal executed successfully.",
-            change_log=change_log,
+        # The snapshot is captured inside the lock by execute_actions, so it is a
+        # consistent pre-execution state for undo.
+        snapshot, change_log = ledger_engine.execute_actions(proposal["actions"])
+    except ledger_engine.LockTimeout:
+        # Nothing was written (the atomic save never ran); let the user retry.
+        await db.reset_proposal_pending(proposal_id)
+        raise HTTPException(
+            409, "The ledger is busy right now. Please try again in a moment."
         )
     except Exception as e:
         logger.error("Execution failed for proposal %d: %s", proposal_id, e)
@@ -416,6 +418,30 @@ async def approve_proposal(proposal_id: int):
             proposal_id=proposal_id,
         )
         return ApprovalResponse(success=False, message=f"Execution failed: {e}")
+
+    await db.save_snapshot(proposal_id, snapshot)
+    # Persist an audit trail of what was executed (item 2.9)
+    for idx, act in enumerate(proposal["actions"]):
+        await db.insert_audit_log(
+            proposal_id=proposal_id,
+            action_index=idx,
+            sheet=act.get("sheet", ""),
+            cell_ref=act.get("cell_ref"),
+            old_value=act.get("old_value"),
+            new_value=act.get("new_value") or act.get("formula")
+            or act.get("values"),
+        )
+    await db.insert_chat_message(
+        "assistant",
+        f"Proposal #{proposal_id} approved and executed. "
+        f"Changes: {'; '.join(change_log)}",
+        proposal_id=proposal_id,
+    )
+    return ApprovalResponse(
+        success=True,
+        message="Proposal executed successfully.",
+        change_log=change_log,
+    )
 
 
 @app.post("/api/proposals/{proposal_id}/reject", response_model=ApprovalResponse,
@@ -526,4 +552,4 @@ async def serve_dashboard():
     html_path = Path("static/index.html")
     if html_path.exists():
         return HTMLResponse(html_path.read_text())
-    return HTMLResponse("<h1>AI Accountant</h1><p>Place static/index.html</p>")
+    return HTMLResponse("<h1>Pacioli</h1><p>Place static/index.html</p>")
