@@ -17,6 +17,9 @@ env/
 !.env.example
 
 # ── Runtime data (regenerated on startup) ─────────────────
+# The live ledger holds real financial data and is seeded from
+# data/ledger.template.xlsx on first run — never commit the live copy.
+data/ledger.xlsx
 data/accountant.db
 data/accountant.db-wal
 data/accountant.db-shm
