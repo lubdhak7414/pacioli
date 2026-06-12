@@ -2,6 +2,7 @@
 
 import contextlib
 import logging
+import os
 import time
 from openpyxl import load_workbook
 from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
@@ -13,10 +14,14 @@ logger = logging.getLogger(__name__)
 # ── File locking ──────────────────────────────────────────────────
 try:
     from filelock import FileLock as _FileLock
+    from filelock import Timeout as LockTimeout
 
     def _get_lock():
         return _FileLock(LEDGER_PATH + ".lock", timeout=10)
 except ImportError:
+    class LockTimeout(Exception):
+        """Fallback when filelock isn't installed (locking degrades to a no-op)."""
+
     def _get_lock():
         return contextlib.nullcontext()
 
@@ -40,6 +45,48 @@ def get_workbook(data_only: bool = False):
 def take_snapshot() -> bytes:
     with open(LEDGER_PATH, "rb") as f:
         return f.read()
+
+
+def _atomic_replace_with_bytes(data: bytes):
+    """Write ``data`` to a temp file beside the ledger, then atomically swap it in.
+
+    ``os.replace`` is atomic on a single filesystem, so a crash mid-write leaves
+    either the complete old file or the complete new one — never a torn .xlsx.
+    """
+    tmp_path = LEDGER_PATH + ".tmp"
+    with open(tmp_path, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, LEDGER_PATH)
+
+
+def get_chart_text() -> str:
+    """Render the live Chart of Accounts as text for the system prompt.
+
+    Sourced from the workbook (not hardcoded in the prompt) so the model can
+    never propose an account the ledger will subsequently reject.
+    """
+    wb = get_workbook(data_only=True)
+    try:
+        if "ChartOfAccounts" not in wb.sheetnames:
+            return "(no chart of accounts found)"
+        cols = get_column_indices("ChartOfAccounts", wb)
+        c_acct = cols.get("Account", 1)
+        c_name = cols.get("AccountName", 2)
+        c_type = cols.get("Type", 3)
+        ws = wb["ChartOfAccounts"]
+        lines = []
+        for r in range(2, ws.max_row + 1):
+            num = ws.cell(r, c_acct).value
+            if num is None or str(num).strip() == "":
+                continue
+            name = str(ws.cell(r, c_name).value or "").strip()
+            typ = str(ws.cell(r, c_type).value or "").strip()
+            lines.append(f"- {str(num).strip()} {name} ({typ})")
+        return "\n".join(lines) if lines else "(chart of accounts is empty)"
+    finally:
+        wb.close()
 
 
 def get_column_indices(sheet_name: str, wb=None) -> dict[str, int]:
@@ -177,8 +224,7 @@ def recalculate_running_balance(ws):
 def restore_snapshot(snapshot_bytes: bytes):
     """Overwrite the ledger file with a previously stored snapshot (item 2.2)."""
     with _get_lock():
-        with open(LEDGER_PATH, "wb") as f:
-            f.write(snapshot_bytes)
+        _atomic_replace_with_bytes(snapshot_bytes)
     _invalidate_caches()
     logger.info("Ledger restored from snapshot (%d bytes).", len(snapshot_bytes))
 
@@ -190,16 +236,25 @@ def _check_double_entry(actions: list[dict]):
     total_debits = 0.0
     total_credits = 0.0
 
+    # Locate the Debit/Credit columns by header name rather than fixed position,
+    # so the check stays correct if the GeneralLedger columns are ever reordered.
+    try:
+        gl_cols = get_column_indices("GeneralLedger")
+    except Exception:
+        gl_cols = {}
+    debit_idx = gl_cols.get("Debit", 6) - 1   # values[] is 0-based; columns are 1-based
+    credit_idx = gl_cols.get("Credit", 7) - 1
+
     for action in actions:
         op = action.get("operation", "")
         ctx = action.get("context", "").lower()
 
         if op == "insert_row":
             vals = action.get("values") or []
-            if len(vals) >= 7:
+            if len(vals) > max(debit_idx, credit_idx):
                 try:
-                    d = vals[5]
-                    c = vals[6]
+                    d = vals[debit_idx]
+                    c = vals[credit_idx]
                     if isinstance(d, (int, float)) and d > 0:
                         total_debits += float(d)
                     if isinstance(c, (int, float)) and c > 0:
@@ -224,8 +279,13 @@ def _check_double_entry(actions: list[dict]):
 
 # ── Execute ───────────────────────────────────────────────────────
 
-def execute_actions(actions: list[dict]) -> list[str]:
-    """Execute approved proposal actions. Returns human-readable change log."""
+def execute_actions(actions: list[dict]) -> tuple[bytes, list[str]]:
+    """Execute approved proposal actions under the file lock.
+
+    Returns ``(pre_snapshot, change_log)``. ``pre_snapshot`` is the ledger's exact
+    bytes *before* any write, captured inside the same lock that guards the write,
+    so it is always a consistent basis for undo (see ``restore_snapshot``).
+    """
     _check_double_entry(actions)
 
     change_log: list[str] = []
@@ -233,6 +293,7 @@ def execute_actions(actions: list[dict]) -> list[str]:
     modified_sheets: set[str] = set()
 
     with _get_lock():
+        snapshot = take_snapshot()  # consistent pre-state, captured under the lock
         wb = get_workbook()
         valid_accounts = get_valid_accounts(wb)
 
@@ -319,13 +380,13 @@ def execute_actions(actions: list[dict]) -> list[str]:
             if "GeneralLedger" in modified_sheets:
                 recalculate_running_balance(wb["GeneralLedger"])
 
-            wb.save(LEDGER_PATH)
+            tmp_path = LEDGER_PATH + ".tmp"
+            wb.save(tmp_path)
+            os.replace(tmp_path, LEDGER_PATH)  # atomic swap: never a torn .xlsx
             logger.info("Ledger saved — %d action(s) executed.", len(actions))
             _invalidate_caches()
 
-        except Exception:
-            raise
         finally:
             wb.close()
 
-    return change_log
+    return snapshot, change_log
