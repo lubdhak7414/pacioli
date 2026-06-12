@@ -31,8 +31,7 @@ data/ledger.xlsx.bak*
 .mypy_cache/
 .pytest_cache/
 
-# ── Editor / OS / agent ───────────────────────────────────
-.claude/
+# ── Editor / OS ───────────────────────────────────────────
 .idea/
 .vscode/
 *.swp
