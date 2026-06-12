@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Accountant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ["Inter", "sans-serif"],
+              mono: ["JetBrains Mono", "monospace"],
+            },
+            colors: {
+              ledger: {
+                bg: "#0f1117",
+                surface: "#1a1d27",
+                border: "#2a2d3a",
+                accent: "#3b82f6",
+                success: "#22c55e",
+                danger: "#ef4444",
+                warn: "#f59e0b",
+              },
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      body { font-family: "Inter", sans-serif; }
+      .font-mono { font-family: "JetBrains Mono", monospace; }
+      .chat-scroll::-webkit-scrollbar { width: 6px; }
+      .chat-scroll::-webkit-scrollbar-thumb { background: #2a2d3a; border-radius: 3px; }
+      @keyframes fadeUp {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      .fade-up { animation: fadeUp 0.3s ease forwards; }
+      .typing-dot { animation: blink 1.4s infinite both; }
+      .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+      .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+      @keyframes blink {
+        0%, 80%, 100% { opacity: 0.2; }
+        40%           { opacity: 1; }
+      }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to   { transform: rotate(360deg); }
+      }
+      .spinner { animation: spin 1s linear infinite; }
+      @keyframes slideIn {
+        from { opacity: 0; transform: translateY(12px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      .toast { animation: slideIn 0.25s ease forwards; }
+      @media (max-width: 768px) {
+        #leftPanel  { width: 100%; border-right: none; border-bottom: 1px solid #2a2d3a; max-height: 55vh; }
+        #rightPanel { width: 100%; }
+        #mainLayout { flex-direction: column; }
+      }
+    </style>
+  </head>
+  <body class="bg-ledger-bg text-gray-200 h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="border-b border-ledger-border px-6 py-4 flex items-center justify-between shrink-0">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-ledger-accent flex items-center justify-center text-white font-bold text-sm">AI</div>
+        <div>
+          <h1 class="text-lg font-semibold text-white">AI Accountant</h1>
+          <p class="text-xs text-gray-500">Human-in-the-Loop Ledger Management</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-4">
+        <span id="healthDot" title="System health" class="w-2 h-2 rounded-full bg-gray-600"></span>
+        <a href="/api/ledger/download" class="text-sm text-ledger-accent hover:underline">Download ledger.xlsx</a>
+      </div>
+    </header>
+
+    <!-- Main two-column layout -->
+    <div id="mainLayout" class="flex flex-1 overflow-hidden">
+
+      <!-- Left: Chat Panel -->
+      <div id="leftPanel" class="w-1/2 flex flex-col border-r border-ledger-border">
+
+        <!-- Search bar -->
+        <div class="px-4 pt-3 pb-2 shrink-0 border-b border-ledger-border/50">
+          <input
+            type="text"
+            id="searchInput"
+            placeholder="Search messages..."
+            class="w-full bg-ledger-surface border border-ledger-border rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-ledger-accent placeholder-gray-600 transition"
+          />
+        </div>
+
+        <!-- Chat messages -->
+        <div id="chatMessages" class="flex-1 overflow-y-auto chat-scroll p-6 space-y-4">
+          <div class="fade-up flex gap-3" id="greetingMsg">
+            <div class="w-7 h-7 rounded-full bg-ledger-accent/20 flex items-center justify-center text-xs text-ledger-accent shrink-0 mt-0.5">AI</div>
+            <div class="bg-ledger-surface border border-ledger-border rounded-xl px-4 py-3 max-w-[85%]">
+              <p class="text-sm mb-3">Hello! I'm your AI accountant. I can record transactions, generate reports, and manage your general ledger. What would you like to do?</p>
+              <div id="examplePrompts" class="flex flex-col gap-2">
+                <button onclick="sendExample('Record a $1,000 cash payment for office supplies')"
+                  class="text-left text-xs px-3 py-2 rounded-lg border border-ledger-border bg-ledger-bg hover:border-ledger-accent hover:text-white transition text-gray-400">
+                  Record a $1,000 cash payment for office supplies
+                </button>
+                <button onclick="sendExample('Record $3,500 revenue received from a client')"
+                  class="text-left text-xs px-3 py-2 rounded-lg border border-ledger-border bg-ledger-bg hover:border-ledger-accent hover:text-white transition text-gray-400">
+                  Record $3,500 revenue received from a client
+                </button>
+                <button onclick="sendExample('Show me the current balance sheet')"
+                  class="text-left text-xs px-3 py-2 rounded-lg border border-ledger-border bg-ledger-bg hover:border-ledger-accent hover:text-white transition text-gray-400">
+                  Show me the current balance sheet
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Input area -->
+        <div class="p-4 border-t border-ledger-border shrink-0">
+          <div id="loadingBanner" class="hidden mb-3 flex items-center gap-2 text-xs text-gray-400">
+            <div class="w-3 h-3 border-2 border-ledger-accent border-t-transparent rounded-full spinner shrink-0"></div>
+            <span id="loadingText">AI is analyzing your request...</span>
+          </div>
+          <form id="chatForm" class="flex gap-2">
+            <input
+              type="text"
+              id="chatInput"
+              placeholder="e.g. Record a $5,000 office supplies purchase on credit..."
+              class="flex-1 bg-ledger-surface border border-ledger-border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-ledger-accent transition placeholder-gray-600"
+            />
+            <button
+              type="submit"
+              id="sendBtn"
+              class="bg-ledger-accent hover:bg-blue-600 text-white px-5 py-3 rounded-lg text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Send
+            </button>
+          </form>
+          <p class="text-xs text-gray-700 mt-2">
+            <kbd class="px-1 rounded border border-gray-700">Ctrl+Y</kbd> approve &nbsp;
+            <kbd class="px-1 rounded border border-gray-700">Ctrl+N</kbd> focus chat &nbsp;
+            <kbd class="px-1 rounded border border-gray-700">Esc</kbd> clear
+          </p>
+        </div>
+      </div>
+
+      <!-- Right: Proposal + History Panel -->
+      <div id="rightPanel" class="w-1/2 flex flex-col overflow-hidden">
+
+        <div class="flex-1 overflow-y-auto chat-scroll p-6">
+          <div id="proposalEmpty" class="h-full flex items-center justify-center text-gray-600 text-sm">
+            <div class="text-center">
+              <div class="text-4xl mb-3 opacity-30">&#9878;</div>
+              <p>No pending proposals</p>
+              <p class="text-xs mt-1 text-gray-700">Proposed edits will appear here for your review</p>
+            </div>
+          </div>
+          <div id="proposalContent" class="hidden"></div>
+        </div>
+
+        <!-- Past proposals toggle -->
+        <div class="border-t border-ledger-border px-6 py-3 shrink-0">
+          <button
+            id="historyToggle"
+            onclick="toggleHistory()"
+            class="w-full text-left text-xs text-gray-500 hover:text-gray-300 transition flex items-center gap-2"
+          >
+            <span id="historyArrow" class="text-gray-600">&#9654;</span>
+            <span>Past Proposals</span>
+          </button>
+          <div id="historyPanel" class="hidden mt-3 space-y-2 max-h-48 overflow-y-auto chat-scroll"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // DOM refs
+      const chatMessages    = document.getElementById("chatMessages");
+      const chatForm        = document.getElementById("chatForm");
+      const chatInput       = document.getElementById("chatInput");
+      const sendBtn         = document.getElementById("sendBtn");
+      const proposalEmpty   = document.getElementById("proposalEmpty");
+      const proposalContent = document.getElementById("proposalContent");
+      const searchInput     = document.getElementById("searchInput");
+      const loadingBanner   = document.getElementById("loadingBanner");
+      const loadingText     = document.getElementById("loadingText");
+
+      var currentProposalId = null;
+      var historyOpen = false;
+
+      // Utilities
+      function escHtml(s) {
+        var d = document.createElement("div");
+        d.textContent = String(s == null ? "" : s);
+        return d.innerHTML;
+      }
+
+      // Toast notifications
+      function showToast(message, type) {
+        var colors = { success: "bg-green-600", error: "bg-red-600", info: "bg-blue-600" };
+        var icons  = { success: "&#10003;", error: "&#10005;", info: "&#9432;" };
+        var el = document.createElement("div");
+        el.className = "toast fixed bottom-6 right-6 " + (colors[type] || colors.info) +
+          " text-white px-4 py-3 rounded-lg text-sm shadow-xl z-50 flex items-center gap-2";
+        el.innerHTML = "<span class='font-bold'>" + (icons[type] || icons.info) + "</span><span>" + escHtml(message) + "</span>";
+        document.body.appendChild(el);
+        setTimeout(function() { el.remove(); }, 3000);
+      }
+
+      // Status badge
+      function statusBadge(status) {
+        var map = {
+          pending:  "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+          executed: "bg-green-500/20 text-green-400 border-green-500/30",
+          approved: "bg-green-500/20 text-green-400 border-green-500/30",
+          rejected: "bg-red-500/20 text-red-400 border-red-500/30",
+          failed:   "bg-red-500/20 text-red-400 border-red-500/30",
+        };
+        var cls = map[status] || "bg-gray-500/20 text-gray-400 border-gray-500/30";
+        return '<span class="ml-1 text-xs font-mono px-1.5 py-0.5 rounded border ' + cls + '">' + escHtml(status) + '</span>';
+      }
+
+      // Add message to chat
+      function addMessage(role, text, proposalId) {
+        // Remove example prompts once the conversation starts
+        var examples = document.getElementById("examplePrompts");
+        if (examples) examples.remove();
+
+        var isUser = role === "user";
+        var wrapper = document.createElement("div");
+        wrapper.className = "fade-up flex gap-3 " + (isUser ? "justify-end" : "");
+        wrapper.dataset.text = String(text).toLowerCase();
+
+        var contentHtml = "";
+        if (isUser) {
+          contentHtml = '<div class="bg-ledger-accent text-white rounded-xl px-4 py-3 max-w-[85%] text-sm">' + escHtml(text) + '</div>';
+        } else {
+          var isError = /\b(validation|error|failed|couldn.t|trouble|timed out)\b/i.test(text);
+          var msgClass = isError
+            ? "bg-red-500/10 border border-ledger-danger/30 text-gray-300"
+            : "bg-ledger-surface border border-ledger-border text-gray-200";
+          var icon = isError ? '<span class="mr-1 shrink-0">&#9888;&#65039;</span>' : "";
+          var badge = proposalId
+            ? '<span class="ml-2 text-xs font-mono px-1.5 py-0.5 rounded border bg-yellow-500/20 text-yellow-400 border-yellow-500/30">#' + proposalId + '</span>'
+            : "";
+          contentHtml =
+            '<div class="w-7 h-7 rounded-full bg-ledger-accent/20 flex items-center justify-center text-xs text-ledger-accent shrink-0 mt-0.5">AI</div>' +
+            '<div class="' + msgClass + ' rounded-xl px-4 py-3 max-w-[85%] text-sm whitespace-pre-wrap">' +
+              icon + escHtml(text) + badge +
+            '</div>';
+        }
+
+        wrapper.innerHTML = contentHtml;
+        chatMessages.appendChild(wrapper);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+
+      // Loading state
+      var _t10, _t60;
+      function showLoading() {
+        loadingBanner.classList.remove("hidden");
+        loadingText.textContent = "AI is analyzing your request...";
+        sendBtn.disabled = true;
+        chatInput.disabled = true;
+
+        _t10 = setTimeout(function() {
+          loadingText.textContent = "Still thinking... this may take a moment.";
+        }, 10000);
+
+        _t60 = setTimeout(function() {
+          hideLoading();
+          hideTyping();
+          addMessage("assistant", "The request is taking too long. Please try again.");
+        }, 60000);
+      }
+
+      function hideLoading() {
+        clearTimeout(_t10);
+        clearTimeout(_t60);
+        loadingBanner.classList.add("hidden");
+        sendBtn.disabled = false;
+        chatInput.disabled = false;
+      }
+
+      // Typing indicator
+      function showTyping() {
+        var el = document.createElement("div");
+        el.id = "typingIndicator";
+        el.className = "fade-up flex gap-3";
+        el.innerHTML =
+          '<div class="w-7 h-7 rounded-full bg-ledger-accent/20 flex items-center justify-center text-xs text-ledger-accent shrink-0">AI</div>' +
+          '<div class="bg-ledger-surface border border-ledger-border rounded-xl px-4 py-3">' +
+            '<span class="typing-dot inline-block w-2 h-2 bg-gray-500 rounded-full mr-1"></span>' +
+            '<span class="typing-dot inline-block w-2 h-2 bg-gray-500 rounded-full mr-1"></span>' +
+            '<span class="typing-dot inline-block w-2 h-2 bg-gray-500 rounded-full"></span>' +
+          '</div>';
+        chatMessages.appendChild(el);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+
+      function hideTyping() {
+        var el = document.getElementById("typingIndicator");
+        if (el) el.remove();
+      }
+
+      // Example prompt buttons
+      function sendExample(text) {
+        chatInput.value = text;
+        chatForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      }
+
+      // Chat submit
+      chatForm.addEventListener("submit", async function(e) {
+        e.preventDefault();
+        var msg = chatInput.value.trim();
+        if (!msg) return;
+
+        chatInput.value = "";
+        addMessage("user", msg);
+        showLoading();
+        showTyping();
+
+        try {
+          var res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: msg }),
+          });
+          var data = await res.json();
+
+          hideTyping();
+          hideLoading();
+          addMessage("assistant", data.assistant_message, data.proposal_id);
+
+          if (data.proposal_id) {
+            await loadProposal(data.proposal_id);
+          }
+        } catch (err) {
+          hideTyping();
+          hideLoading();
+          addMessage("assistant", "Error: Could not reach the server. Please try again.");
+        }
+      });
+
+      // Load proposal into right panel
+      async function loadProposal(id) {
+        try {
+          var res = await fetch("/api/proposals/" + id);
+          var p = await res.json();
+
+          currentProposalId = p.status === "pending" ? id : null;
+
+          proposalEmpty.classList.add("hidden");
+          proposalContent.classList.remove("hidden");
+
+          var actionsHtml = "";
+          if (p.actions && p.actions.length > 0) {
+            actionsHtml = p.actions.map(function(a) {
+              var valueDisplay = "";
+              if (a.old_value_display !== null && a.old_value_display !== undefined) {
+                valueDisplay =
+                  '<div class="flex items-center gap-2 text-sm flex-wrap">' +
+                    '<span class="text-ledger-danger line-through">' + escHtml(a.old_value_display) + '</span>' +
+                    '<span class="text-gray-600">&rarr;</span>' +
+                    '<span class="text-ledger-success font-medium">' + escHtml(a.new_value_display) + '</span>' +
+                  '</div>';
+              } else {
+                valueDisplay =
+                  '<div class="text-sm">' +
+                    '<span class="text-gray-600">Set to:</span>' +
+                    '<span class="text-ledger-success font-medium ml-1">' + escHtml(a.new_value_display) + '</span>' +
+                  '</div>';
+              }
+              return (
+                '<div class="bg-ledger-bg border border-ledger-border rounded-lg p-3">' +
+                  '<div class="flex items-center gap-2 mb-2 flex-wrap">' +
+                    '<span class="text-xs font-mono px-2 py-0.5 rounded bg-ledger-accent/10 text-ledger-accent">' + escHtml(a.operation) + '</span>' +
+                    '<span class="text-xs text-gray-500">' + escHtml(a.sheet) + '!' + escHtml(a.cell_ref || a.start_cell || "Row " + a.row_index) + '</span>' +
+                  '</div>' +
+                  valueDisplay +
+                  '<p class="text-xs text-gray-500 mt-1">' + escHtml(a.context || "") + '</p>' +
+                '</div>'
+              );
+            }).join("");
+          }
+
+          var isPending = p.status === "pending";
+          var statusHtml = isPending
+            ? '<span class="inline-block w-3 h-3 rounded-full bg-ledger-warn animate-pulse"></span><span class="text-sm font-medium text-ledger-warn">Pending Approval</span>'
+            : '<span class="text-sm font-medium text-gray-400">Status:</span>' + statusBadge(p.status);
+
+          var buttonsHtml = isPending
+            ? '<div id="approvalButtons" class="flex gap-3">' +
+                '<button onclick="approveProposal(' + p.id + ')" class="flex-1 bg-ledger-success hover:bg-green-600 text-white py-3 rounded-lg text-sm font-medium transition">Approve &amp; Execute</button>' +
+                '<button onclick="rejectProposal(' + p.id + ')" class="flex-1 bg-ledger-danger hover:bg-red-600 text-white py-3 rounded-lg text-sm font-medium transition">Reject</button>' +
+              '</div>'
+            : '<div id="approvalButtons"><p class="text-sm text-gray-500">This proposal has already been ' + escHtml(p.status) + '.</p></div>';
+
+          proposalContent.innerHTML =
+            '<div class="fade-up">' +
+              '<div class="flex items-center gap-2 mb-4">' + statusHtml + '<span class="text-xs text-gray-600 ml-auto">#' + p.id + '</span></div>' +
+              '<div class="mb-4">' +
+                '<p class="text-xs text-gray-500 mb-1">Your request</p>' +
+                '<p class="text-sm bg-ledger-bg border border-ledger-border rounded-lg px-3 py-2">' + escHtml(p.user_message) + '</p>' +
+              '</div>' +
+              '<div class="mb-4">' +
+                '<p class="text-xs text-gray-500 mb-1">AI Reasoning</p>' +
+                '<p class="text-sm text-gray-400">' + escHtml(p.justification || "") + '</p>' +
+              '</div>' +
+              '<div class="mb-6">' +
+                '<p class="text-xs text-gray-500 mb-2">Proposed Changes (' + (p.actions ? p.actions.length : 0) + ')</p>' +
+                '<div class="space-y-2">' + actionsHtml + '</div>' +
+              '</div>' +
+              buttonsHtml +
+              '<div id="approvalResult" class="mt-3 hidden"></div>' +
+            '</div>';
+
+          if (isPending) {
+            showToast("Proposal #" + id + " ready for review — Ctrl+Y to approve", "info");
+          }
+        } catch (err) {
+          proposalContent.innerHTML = '<p class="text-sm text-ledger-danger">Failed to load proposal #' + id + '</p>';
+          proposalEmpty.classList.add("hidden");
+          proposalContent.classList.remove("hidden");
+        }
+      }
+
+      // Approve proposal
+      async function approveProposal(id) {
+        var btns = document.getElementById("approvalButtons");
+        btns.innerHTML = '<p class="text-sm text-gray-500 animate-pulse">Executing...</p>';
+        try {
+          var res = await fetch("/api/proposals/" + id + "/approve", { method: "POST" });
+          var data = await res.json();
+          var result = document.getElementById("approvalResult");
+          result.classList.remove("hidden");
+
+          if (data.success) {
+            btns.innerHTML = '<p class="text-sm text-ledger-success font-medium">&#10003; Changes applied to ledger</p>';
+            result.innerHTML =
+              '<div class="text-xs text-ledger-success bg-ledger-success/10 border border-ledger-success/20 rounded-lg p-3">' +
+                (data.change_log ? data.change_log.map(function(c) { return '<p>' + escHtml(c) + '</p>'; }).join("") : "Done.") +
+              '</div>';
+            addMessage("assistant", "Proposal #" + id + " approved — " + (data.change_log ? data.change_log.length : 0) + " cell(s) updated.", id);
+            showToast("Proposal approved and executed", "success");
+            currentProposalId = null;
+          } else {
+            btns.innerHTML = '<p class="text-sm text-ledger-danger">Execution failed</p>';
+            result.innerHTML = '<p class="text-xs text-ledger-danger">' + escHtml(data.message) + '</p>';
+            addMessage("assistant", "Proposal #" + id + " execution failed: " + data.message);
+            showToast("Execution failed", "error");
+          }
+
+          if (historyOpen) loadHistory();
+        } catch (err) {
+          btns.innerHTML = '<p class="text-sm text-ledger-danger">Request failed</p>';
+          showToast("Could not reach the server", "error");
+        }
+      }
+
+      // Reject proposal
+      async function rejectProposal(id) {
+        var btns = document.getElementById("approvalButtons");
+        btns.innerHTML = '<p class="text-sm text-gray-500 animate-pulse">Rejecting...</p>';
+        try {
+          var res = await fetch("/api/proposals/" + id + "/reject", { method: "POST" });
+          var data = await res.json();
+          var result = document.getElementById("approvalResult");
+          result.classList.remove("hidden");
+
+          if (data.success) {
+            btns.innerHTML = '<p class="text-sm text-gray-500">Proposal rejected. No changes made.</p>';
+            addMessage("assistant", "Proposal #" + id + " rejected. No edits were made.");
+            showToast("Proposal rejected", "info");
+            currentProposalId = null;
+          }
+
+          if (historyOpen) loadHistory();
+        } catch (err) {
+          btns.innerHTML = '<p class="text-sm text-ledger-danger">Request failed</p>';
+          showToast("Could not reach the server", "error");
+        }
+      }
+
+      // Past proposals history panel
+      async function loadHistory() {
+        var panel = document.getElementById("historyPanel");
+        panel.innerHTML = '<p class="text-xs text-gray-600 animate-pulse">Loading...</p>';
+        try {
+          var res = await fetch("/api/proposals?limit=10");
+          var data = await res.json();
+          var proposals = data.proposals || [];
+          if (proposals.length === 0) {
+            panel.innerHTML = '<p class="text-xs text-gray-600">No proposals yet.</p>';
+            return;
+          }
+          panel.innerHTML = proposals.map(function(p) {
+            var truncated = p.user_message.length > 55
+              ? p.user_message.slice(0, 55) + "..."
+              : p.user_message;
+            return (
+              '<div class="flex items-center gap-2 p-2 rounded-lg bg-ledger-bg border border-ledger-border cursor-pointer hover:border-ledger-accent/50 transition text-xs" onclick="loadProposal(' + p.id + ')">' +
+                '<span class="font-mono text-gray-600 shrink-0">#' + p.id + '</span>' +
+                statusBadge(p.status) +
+                '<span class="text-gray-400 flex-1 truncate ml-1">' + escHtml(truncated) + '</span>' +
+              '</div>'
+            );
+          }).join("");
+        } catch (err) {
+          panel.innerHTML = '<p class="text-xs text-ledger-danger">Failed to load history.</p>';
+        }
+      }
+
+      function toggleHistory() {
+        historyOpen = !historyOpen;
+        var panel = document.getElementById("historyPanel");
+        var arrow = document.getElementById("historyArrow");
+        if (historyOpen) {
+          panel.classList.remove("hidden");
+          arrow.innerHTML = "&#9660;";
+          loadHistory();
+        } else {
+          panel.classList.add("hidden");
+          arrow.innerHTML = "&#9654;";
+        }
+      }
+
+      // Message search
+      searchInput.addEventListener("input", function() {
+        var q = this.value.toLowerCase().trim();
+        var msgs = chatMessages.querySelectorAll("[data-text]");
+        msgs.forEach(function(el) {
+          el.style.display = !q || el.dataset.text.includes(q) ? "" : "none";
+        });
+      });
+
+      // Keyboard shortcuts
+      document.addEventListener("keydown", function(e) {
+        if (e.ctrlKey && e.key === "y") {
+          e.preventDefault();
+          if (currentProposalId) {
+            approveProposal(currentProposalId);
+          } else {
+            showToast("No pending proposal to approve", "info");
+          }
+        } else if (e.ctrlKey && e.key === "n") {
+          e.preventDefault();
+          chatInput.focus();
+        } else if (e.key === "Escape" && document.activeElement === chatInput) {
+          chatInput.value = "";
+        }
+      });
+
+      // Health check dot
+      async function checkHealth() {
+        var dot = document.getElementById("healthDot");
+        try {
+          var res = await fetch("/api/health");
+          var data = await res.json();
+          dot.className = data.status === "ok"
+            ? "w-2 h-2 rounded-full bg-green-500"
+            : "w-2 h-2 rounded-full bg-yellow-500";
+          dot.title = "Status: " + data.status + " | DB: " + data.database + " | Ledger: " + (data.ledger_exists ? "found" : "missing");
+        } catch (e) {
+          dot.className = "w-2 h-2 rounded-full bg-red-500";
+          dot.title = "Server unreachable";
+        }
+      }
+      checkHealth();
+      setInterval(checkHealth, 60000);
+
+      // Load chat history on page load
+      (async function() {
+        try {
+          var res = await fetch("/api/chat/history");
+          var data = await res.json();
+          if (data.messages && data.messages.length > 0) {
+            chatMessages.innerHTML = "";
+            data.messages.forEach(function(m) {
+              addMessage(m.role, m.content, m.proposal_id);
+            });
+          }
+        } catch (err) {
+          console.error("Failed to load chat history", err);
+        }
+      })();
+    </script>
+  </body>
+</html>

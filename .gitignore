@@ -1,0 +1,39 @@
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ── Virtual environments ──────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Secrets / environment ─────────────────────────────────
+.env
+*.env
+!.env.example
+
+# ── Runtime data (regenerated on startup) ─────────────────
+data/accountant.db
+data/accountant.db-wal
+data/accountant.db-shm
+data/*.lock
+data/ledger.xlsx.lock
+data/backups/
+data/ledger.xlsx.bak*
+
+# ── Tooling caches ────────────────────────────────────────
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# ── Editor / OS / agent ───────────────────────────────────
+.claude/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
