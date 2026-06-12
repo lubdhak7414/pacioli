@@ -3,6 +3,7 @@
 import os
 
 LEDGER_PATH = os.getenv("LEDGER_PATH", "data/ledger.xlsx")
+LEDGER_TEMPLATE_PATH = os.getenv("LEDGER_TEMPLATE_PATH", "data/ledger.template.xlsx")
 DB_PATH = os.getenv("DB_PATH", "data/accountant.db")
 AI_MODEL = os.getenv("AI_MODEL", "gemini-2.5-flash")
 AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.2"))
