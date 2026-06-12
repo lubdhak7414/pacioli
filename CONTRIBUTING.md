@@ -1,4 +1,4 @@
-# Contributing to AI Accountant
+# Contributing to Pacioli
 
 ## Prerequisites
 - Python 3.11+ (the project is developed against 3.14)

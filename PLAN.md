@@ -1,4 +1,4 @@
-# AI Accountant — Roadmap & Status
+# Pacioli — Roadmap & Status
 
 > The original build blueprint and the v2 improvement roadmap have been
 > implemented and retired. The items below were the remaining worthwhile work

@@ -1,4 +1,4 @@
-# AI Accountant — Project Handoff
+# Pacioli — Project Handoff
 
 > **Created:** 2025-06-08 | **Status:** Functional MVP | **Last Verified:** Full end-to-end flow working
 
