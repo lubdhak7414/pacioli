@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 
@@ -57,27 +58,39 @@ CREATE TABLE IF NOT EXISTS audit_log (
 """
 
 
+@asynccontextmanager
+async def _conn():
+    """Open a connection with a Row factory, commit on clean exit, always close.
+
+    Centralizes the open/row_factory/commit/close dance every query repeated.
+    """
+    db = await aiosqlite.connect(DB_PATH)
+    db.row_factory = aiosqlite.Row
+    try:
+        yield db
+        await db.commit()
+    finally:
+        await db.close()
+
+
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _conn() as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(INIT_SQL)
-        await db.commit()
 
 
 async def insert_chat_message(role: str, content: str,
                               proposal_id: Optional[int] = None) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _conn() as db:
         cursor = await db.execute(
             "INSERT INTO chat_messages (role, content, proposal_id) VALUES (?, ?, ?)",
             (role, content, proposal_id),
         )
-        await db.commit()
         return cursor.lastrowid
 
 
 async def get_chat_history(limit: int = 20) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with _conn() as db:
         cursor = await db.execute(
             "SELECT role, content, proposal_id FROM chat_messages ORDER BY id DESC LIMIT ?",
             (limit,),
@@ -89,7 +102,7 @@ async def get_chat_history(limit: int = 20) -> list[dict]:
 async def create_proposal(user_message: str, ai_reasoning: str,
                           actions: list[dict],
                           validation_notes: Optional[list[str]] = None) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _conn() as db:
         cursor = await db.execute(
             """INSERT INTO proposals
                (status, user_message, ai_reasoning, actions_json, validation_notes)
@@ -97,14 +110,11 @@ async def create_proposal(user_message: str, ai_reasoning: str,
             (user_message, ai_reasoning, json.dumps(actions),
              json.dumps(validation_notes or [])),
         )
-        await db.commit()
         return cursor.lastrowid
 
 
 async def get_proposal(proposal_id: int) -> Optional[dict]:
-    assert isinstance(proposal_id, int)
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with _conn() as db:
         cursor = await db.execute(
             "SELECT * FROM proposals WHERE id = ?", (proposal_id,)
         )
@@ -118,8 +128,7 @@ async def get_proposal(proposal_id: int) -> Optional[dict]:
 
 async def get_proposals(limit: int = 10) -> list[dict]:
     """Return recent proposals for the history panel."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with _conn() as db:
         cursor = await db.execute(
             """SELECT id, status, user_message, ai_reasoning, created_at
                FROM proposals ORDER BY id DESC LIMIT ?""",
@@ -131,21 +140,18 @@ async def get_proposals(limit: int = 10) -> list[dict]:
 
 async def approve_proposal_atomic(proposal_id: int) -> bool:
     """Atomically transition pending -> executed. Returns True if the update succeeded."""
-    assert isinstance(proposal_id, int)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _conn() as db:
         cursor = await db.execute(
             """UPDATE proposals SET status = 'executed', executed_at = ?
                WHERE id = ? AND status = 'pending'""",
             (datetime.utcnow().isoformat(), proposal_id),
         )
-        await db.commit()
         return cursor.rowcount > 0
 
 
 async def update_proposal_status(proposal_id: int, status: str,
                                   error_message: Optional[str] = None):
-    assert isinstance(proposal_id, int)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _conn() as db:
         timestamp_col = "executed_at" if status == "executed" else "rejected_at"
         await db.execute(
             f"""UPDATE proposals
@@ -153,13 +159,20 @@ async def update_proposal_status(proposal_id: int, status: str,
                 WHERE id = ?""",
             (status, datetime.utcnow().isoformat(), error_message, proposal_id),
         )
-        await db.commit()
+
+
+async def reset_proposal_pending(proposal_id: int):
+    """Return a proposal to 'pending' so it can be retried (e.g. after a lock timeout)."""
+    async with _conn() as db:
+        await db.execute(
+            "UPDATE proposals SET status = 'pending', executed_at = NULL WHERE id = ?",
+            (proposal_id,),
+        )
 
 
 async def get_snapshot(proposal_id: int) -> Optional[bytes]:
     """Return the most recent ledger snapshot stored for a proposal, if any."""
-    assert isinstance(proposal_id, int)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _conn() as db:
         cursor = await db.execute(
             """SELECT snapshot FROM ledger_snapshots
                WHERE proposal_id = ? ORDER BY id DESC LIMIT 1""",
@@ -170,18 +183,16 @@ async def get_snapshot(proposal_id: int) -> Optional[bytes]:
 
 
 async def save_snapshot(proposal_id: int, snapshot_bytes: bytes):
-    assert isinstance(proposal_id, int)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _conn() as db:
         await db.execute(
             "INSERT INTO ledger_snapshots (proposal_id, snapshot) VALUES (?, ?)",
             (proposal_id, snapshot_bytes),
         )
-        await db.commit()
 
 
 async def insert_audit_log(proposal_id: int, action_index: int, sheet: str,
                             cell_ref: Optional[str], old_value, new_value):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _conn() as db:
         await db.execute(
             """INSERT INTO audit_log
                (proposal_id, action_index, sheet, cell_ref, old_value, new_value)
@@ -192,14 +203,13 @@ async def insert_audit_log(proposal_id: int, action_index: int, sheet: str,
                 str(new_value) if new_value is not None else None,
             ),
         )
-        await db.commit()
 
 
 async def cleanup_stale_proposals():
     """Background task: auto-reject proposals pending for more than 15 minutes."""
     while True:
         try:
-            async with aiosqlite.connect(DB_PATH) as db:
+            async with _conn() as db:
                 cursor = await db.execute(
                     """UPDATE proposals
                        SET status = 'rejected', rejected_at = ?,
@@ -210,7 +220,6 @@ async def cleanup_stale_proposals():
                 )
                 if cursor.rowcount > 0:
                     logger.info("Cleaned up %d stale proposal(s).", cursor.rowcount)
-                await db.commit()
         except Exception as e:
             logger.error("Stale-proposal cleanup error: %s", e)
         await asyncio.sleep(300)  # every 5 minutes
