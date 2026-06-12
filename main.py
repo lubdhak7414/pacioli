@@ -14,14 +14,14 @@ import aiosqlite
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 import config
 import db
 import ai_client
 import ledger_engine
-from models import Proposal
+import report_engine
+from models import Proposal, OperationType
 
 # ── Logging ───────────────────────────────────────────────────────
 logging.basicConfig(
@@ -44,6 +44,36 @@ def sanitize_input(text: str) -> str:
     if _INJECTION.search(text):
         logger.warning("Possible prompt-injection attempt detected.")
     return text[: config.MAX_INPUT_LENGTH].strip()
+
+
+def fiscal_warnings(actions) -> list[str]:
+    """Flag insert_row transactions dated outside the configured fiscal year (item 1.3)."""
+    warnings: list[str] = []
+    for a in actions:
+        if a.operation == OperationType.INSERT_ROW and a.values:
+            date_val = a.values[0]
+            if isinstance(date_val, str) and date_val[:4].isdigit():
+                if int(date_val[:4]) != config.FISCAL_YEAR:
+                    warnings.append(
+                        f"Transaction dated {date_val} is outside fiscal year "
+                        f"{config.FISCAL_YEAR}."
+                    )
+    return warnings
+
+
+def _render_ai_report(report: dict) -> str:
+    """Fallback renderer when the report type can't be computed locally."""
+    text = f"**{report.get('title', 'Report')}**\n\n"
+    for section in report.get("sections", []):
+        text += f"### {section.get('heading', '')}\n"
+        for line in section.get("lines", []):
+            acct = line.get("account", "")
+            num = line.get("account_number", "")
+            amt = line.get("amount", 0)
+            text += f"  - {acct} ({num}): ${amt:,.2f}\n"
+        text += "\n"
+    text += "\n_Note: figures could not be recomputed from the ledger; shown as estimated by the AI._"
+    return text
 
 
 # ── Lifespan ──────────────────────────────────────────────────────
@@ -125,6 +155,7 @@ class ProposalDetail(BaseModel):
     actions: list[dict]
     user_message: str
     created_at: str
+    validation_notes: list[str] = []
 
 
 class ApprovalResponse(BaseModel):
@@ -165,7 +196,7 @@ async def chat(request: ChatRequest):
     """
     clean_msg = sanitize_input(request.message)
 
-    msg_id = await db.insert_chat_message("user", clean_msg)
+    await db.insert_chat_message("user", clean_msg)
     history = await db.get_chat_history(limit=20)
     ledger_summary = ledger_engine.get_ledger_summary()
 
@@ -197,24 +228,22 @@ async def chat(request: ChatRequest):
             await db.insert_chat_message("assistant", err_msg)
             return ChatResponse(assistant_message=err_msg)
 
-        # ── Report (read-only) ────────────────────────────────────
+        # ── Report (read-only, numbers computed from the ledger) ───
         if "report" in ai_response:
             report = ai_response["report"]
-            report_text = f"**{report.get('title', 'Report')}**\n\n"
-            for section in report.get("sections", []):
-                report_text += f"### {section['heading']}\n"
-                for line in section.get("lines", []):
-                    acct = line.get("account", "")
-                    num = line.get("account_number", "")
-                    amt = line.get("amount", 0)
-                    report_text += f"  - {acct} ({num}): ${amt:,.2f}\n"
-                report_text += "\n"
-            totals = report.get("totals", {})
-            report_text += (
-                f"**Total Assets:** ${totals.get('total_assets', 0):,.2f}\n"
-                f"**Total Liabilities:** ${totals.get('total_liabilities', 0):,.2f}\n"
-                f"**Total Equity:** ${totals.get('total_equity', 0):,.2f}\n"
-            )
+            # Compute the report from real ledger data — never trust AI numbers (item 4.1).
+            try:
+                computed = report_engine.generate(report.get("title", ""), clean_msg)
+            except Exception as e:
+                logger.error("Report computation failed: %s", e)
+                computed = None
+
+            if computed:
+                report_text = report_engine.render_markdown(computed)
+            else:
+                # Unknown report type — fall back to the AI's structure.
+                report_text = _render_ai_report(report)
+
             await db.insert_chat_message("assistant", report_text)
             return ChatResponse(assistant_message=report_text)
 
@@ -254,17 +283,22 @@ async def chat(request: ChatRequest):
         await db.insert_chat_message("assistant", msg)
         return ChatResponse(assistant_message=msg)
 
+    # ── Fiscal-period check (non-blocking warnings, item 1.3) ──────
+    warnings = fiscal_warnings(validated.actions)
+
     # ── Store proposal ────────────────────────────────────────────
     proposal_id = await db.create_proposal(
         user_message=clean_msg,
         ai_reasoning=validated.justification,
         actions=[a.model_dump() for a in validated.actions],
+        validation_notes=warnings,
     )
 
+    warn_text = ("\n\n⚠️ " + " ".join(warnings)) if warnings else ""
     ack = (
         f"I've prepared a proposed edit for your review. (Proposal #{proposal_id})\n\n"
         f"**Summary:** {validated.summary}\n"
-        f"**Reasoning:** {validated.justification}\n\n"
+        f"**Reasoning:** {validated.justification}{warn_text}\n\n"
         "Please review the changes in the right panel and approve or reject."
     )
     await db.insert_chat_message("assistant", ack, proposal_id=proposal_id)
@@ -274,6 +308,16 @@ async def chat(request: ChatRequest):
         proposal_id=proposal_id,
         proposal_summary=validated.summary,
     )
+
+
+def _parse_notes(raw) -> list[str]:
+    if not raw:
+        return []
+    try:
+        val = json.loads(raw)
+        return val if isinstance(val, list) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 @app.get("/api/proposals", summary="List recent proposals")
@@ -318,6 +362,7 @@ async def get_proposal(proposal_id: int):
         actions=preview_actions,
         user_message=proposal["user_message"],
         created_at=proposal["created_at"],
+        validation_notes=_parse_notes(proposal.get("validation_notes")),
     )
 
 
@@ -340,6 +385,17 @@ async def approve_proposal(proposal_id: int):
 
     try:
         change_log = ledger_engine.execute_actions(proposal["actions"])
+        # Persist an audit trail of what was executed (item 2.9)
+        for idx, act in enumerate(proposal["actions"]):
+            await db.insert_audit_log(
+                proposal_id=proposal_id,
+                action_index=idx,
+                sheet=act.get("sheet", ""),
+                cell_ref=act.get("cell_ref"),
+                old_value=act.get("old_value"),
+                new_value=act.get("new_value") or act.get("formula")
+                or act.get("values"),
+            )
         await db.insert_chat_message(
             "assistant",
             f"Proposal #{proposal_id} approved and executed. "
@@ -378,6 +434,63 @@ async def reject_proposal(proposal_id: int):
         proposal_id=proposal_id,
     )
     return ApprovalResponse(success=True, message="Proposal rejected.")
+
+
+@app.post("/api/proposals/{proposal_id}/restore", response_model=ApprovalResponse,
+          summary="Restore the ledger to its state before this proposal (undo)")
+async def restore_proposal(proposal_id: int):
+    """Roll the ledger back to the snapshot taken before this proposal executed."""
+    proposal = await db.get_proposal(proposal_id)
+    if not proposal:
+        raise HTTPException(404, "Proposal not found")
+
+    snapshot = await db.get_snapshot(proposal_id)
+    if snapshot is None:
+        raise HTTPException(404, "No snapshot available for this proposal.")
+
+    try:
+        ledger_engine.restore_snapshot(snapshot)
+    except Exception as e:
+        logger.error("Restore failed for proposal %d: %s", proposal_id, e)
+        raise HTTPException(500, f"Restore failed: {e}")
+
+    await db.insert_audit_log(
+        proposal_id=proposal_id, action_index=-1, sheet="*",
+        cell_ref=None, old_value="executed", new_value="restored",
+    )
+    await db.insert_chat_message(
+        "assistant",
+        f"Ledger restored to the state before proposal #{proposal_id}.",
+        proposal_id=proposal_id,
+    )
+    return ApprovalResponse(
+        success=True,
+        message=f"Ledger restored to before proposal #{proposal_id}.",
+    )
+
+
+@app.get("/api/ledger/preview", summary="Read-only preview of a ledger sheet")
+async def ledger_preview(sheet: str = "GeneralLedger", limit: int = 50):
+    """Return the header row + first N data rows of a sheet as JSON (item 1.7)."""
+    try:
+        wb = ledger_engine.get_workbook(data_only=True)
+    except Exception as e:
+        raise HTTPException(500, f"Could not open ledger: {e}")
+    try:
+        if sheet not in wb.sheetnames:
+            raise HTTPException(404, f"Sheet '{sheet}' not found.")
+        ws = wb[sheet]
+        max_col = ws.max_column or 1
+        headers = [str(ws.cell(1, c).value or "") for c in range(1, max_col + 1)]
+        rows = []
+        for r in range(2, min(ws.max_row, 1 + max(1, limit)) + 1):
+            rows.append([
+                ws.cell(r, c).value for c in range(1, max_col + 1)
+            ])
+        return {"sheet": sheet, "sheets": wb.sheetnames,
+                "headers": headers, "rows": rows}
+    finally:
+        wb.close()
 
 
 @app.get("/api/chat/history", summary="Return full chat history")

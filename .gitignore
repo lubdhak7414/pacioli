@@ -23,6 +23,7 @@ data/accountant.db-shm
 data/*.lock
 data/ledger.xlsx.lock
 data/backups/
+data/ledger_backup_*.xlsx
 data/ledger.xlsx.bak*
 
 # ── Tooling caches ────────────────────────────────────────

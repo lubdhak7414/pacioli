@@ -4,7 +4,7 @@ import contextlib
 import logging
 import time
 from openpyxl import load_workbook
-from openpyxl.utils import coordinate_from_string
+from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
 
 from config import LEDGER_PATH
 
@@ -127,6 +127,62 @@ def get_ledger_summary() -> str:
     return summary
 
 
+# ── Monetary formatting & running balance ─────────────────────────
+
+_MONEY_FORMAT = "#,##0.00"
+_MONETARY_HEADERS = ("debit", "credit", "balance", "amount")
+
+
+def _monetary_columns(ws) -> set[int]:
+    """1-based indices of columns whose header looks monetary."""
+    cols: set[int] = set()
+    for c in range(1, (ws.max_column or 1) + 1):
+        h = ws.cell(1, c).value
+        if h and any(k in str(h).strip().lower() for k in _MONETARY_HEADERS):
+            cols.add(c)
+    return cols
+
+
+def _apply_money_format(ws, row: int, col: int, value):
+    """Apply currency number format if the cell holds a numeric value (item 3.2)."""
+    if isinstance(value, (int, float)):
+        ws.cell(row=row, column=col).number_format = _MONEY_FORMAT
+
+
+def recalculate_running_balance(ws):
+    """Recompute the GeneralLedger Balance column as a cumulative debit-credit
+    running total down the sheet (item 1.2). No-op if columns are missing."""
+    headers = {str(ws.cell(1, c).value).strip().lower(): c
+               for c in range(1, (ws.max_column or 1) + 1)
+               if ws.cell(1, c).value}
+    c_debit = headers.get("debit")
+    c_credit = headers.get("credit")
+    c_balance = headers.get("balance")
+    if not (c_debit and c_credit and c_balance):
+        return
+    running = 0.0
+    for r in range(2, (ws.max_row or 1) + 1):
+        debit = ws.cell(r, c_debit).value
+        credit = ws.cell(r, c_credit).value
+        try:
+            running += float(debit or 0) - float(credit or 0)
+        except (TypeError, ValueError):
+            pass  # leave running unchanged on non-numeric rows
+        ws.cell(row=r, column=c_balance, value=round(running, 2))
+        ws.cell(r, c_balance).number_format = _MONEY_FORMAT
+
+
+# ── Snapshot restore (undo) ───────────────────────────────────────
+
+def restore_snapshot(snapshot_bytes: bytes):
+    """Overwrite the ledger file with a previously stored snapshot (item 2.2)."""
+    with _get_lock():
+        with open(LEDGER_PATH, "wb") as f:
+            f.write(snapshot_bytes)
+    _invalidate_caches()
+    logger.info("Ledger restored from snapshot (%d bytes).", len(snapshot_bytes))
+
+
 # ── Double-entry pre-flight check ─────────────────────────────────
 
 def _check_double_entry(actions: list[dict]):
@@ -174,6 +230,8 @@ def execute_actions(actions: list[dict]) -> list[str]:
 
     change_log: list[str] = []
 
+    modified_sheets: set[str] = set()
+
     with _get_lock():
         wb = get_workbook()
         valid_accounts = get_valid_accounts(wb)
@@ -187,6 +245,8 @@ def execute_actions(actions: list[dict]) -> list[str]:
                     raise ValueError(f"Sheet '{sheet}' does not exist.")
 
                 ws = wb[sheet]
+                modified_sheets.add(sheet)
+                money_cols = _monetary_columns(ws)
 
                 if op == "write_cell":
                     cell_ref = action["cell_ref"]
@@ -196,6 +256,9 @@ def execute_actions(actions: list[dict]) -> list[str]:
                     if isinstance(new_val, float):
                         new_val = round(new_val, 2)
                     ws[cell_ref] = new_val
+                    col_letter, row_num = coordinate_from_string(cell_ref)
+                    if column_index_from_string(col_letter) in money_cols:
+                        _apply_money_format(ws, row_num, column_index_from_string(col_letter), new_val)
                     change_log.append(
                         f"[{sheet}!{cell_ref}] {old_val!r} → {new_val!r}"
                         + (f" ({action.get('context', '')})" if action.get("context") else "")
@@ -218,7 +281,10 @@ def execute_actions(actions: list[dict]) -> list[str]:
                         for c_idx, val in enumerate(row_data):
                             if isinstance(val, float):
                                 val = round(val, 2)
-                            ws.cell(row=min_row + r_idx, column=min_col + c_idx, value=val)
+                            tr, tc = min_row + r_idx, min_col + c_idx
+                            ws.cell(row=tr, column=tc, value=val)
+                            if tc in money_cols:
+                                _apply_money_format(ws, tr, tc, val)
                     change_log.append(
                         f"[{sheet}!{start}:{end}] wrote "
                         f"{len(values)}×{len(values[0]) if values else 0} block"
@@ -240,12 +306,18 @@ def execute_actions(actions: list[dict]) -> list[str]:
                         if isinstance(val, float):
                             val = round(val, 2)
                         ws.cell(row=row_idx, column=c_idx, value=val)
+                        if c_idx in money_cols:
+                            _apply_money_format(ws, row_idx, c_idx, val)
                     change_log.append(
                         f"[{sheet}] inserted row {row_idx} ({len(values)} values)"
                     )
 
                 else:
                     raise ValueError(f"Unknown operation: {op}")
+
+            # Recompute the running balance on any GeneralLedger we touched (item 1.2)
+            if "GeneralLedger" in modified_sheets:
+                recalculate_running_balance(wb["GeneralLedger"])
 
             wb.save(LEDGER_PATH)
             logger.info("Ledger saved — %d action(s) executed.", len(actions))

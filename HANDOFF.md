@@ -38,18 +38,25 @@ uvicorn main:app --port 8000 --reload
 
 ```
 ai_accountant/
-├── main.py                     # FastAPI app, all API endpoints (448 lines)
-├── ai_client.py                # Gemini SDK wrapper, Pydantic models (300 lines)
-├── db.py                       # SQLite async layer (115 lines)
-├── ledger_engine.py            # openpyxl read/write/snapshot (131 lines)
+├── main.py                     # FastAPI app, all API endpoints
+├── ai_client.py                # Gemini SDK wrapper (timeout + retry)
+├── models.py                   # Shared Pydantic models & validation
+├── report_engine.py            # Reports computed from real ledger data
+├── db.py                       # SQLite async layer (proposals/chat/snapshots/audit)
+├── ledger_engine.py            # openpyxl read/write/snapshot/restore
+├── config.py                   # Central env-overridable configuration
 ├── prompts/
-│   └── system_accountant.txt   # System prompt for Gemini (31 lines)
+│   └── system_accountant.txt   # System prompt for Gemini
 ├── data/
 │   ├── ledger.xlsx             # The source-of-truth Excel ledger
-│   └── accountant.db           # SQLite: proposals, chat history, snapshots
+│   └── accountant.db           # SQLite: proposals, chat, snapshots, audit
 ├── static/
-│   └── index.html              # Dashboard frontend (495 lines)
+│   └── index.html              # Dashboard frontend (Proposal + Ledger tabs)
+├── tests/                      # pytest suite
+├── .github/workflows/ci.yml    # ruff + py_compile + pytest
+├── Dockerfile
 ├── requirements.txt
+├── requirements-dev.txt
 ├── PLAN.md                     # Remaining work / roadmap
 └── HANDOFF.md                  # This file
 ```
@@ -116,7 +123,9 @@ proposals pending > 15 min. Ledger is backed up on startup (last 10 kept).
 | `GET` | `/api/proposals/{id}` | Get proposal details for preview |
 | `POST` | `/api/proposals/{id}/approve` | Approve & execute proposal (atomic) |
 | `POST` | `/api/proposals/{id}/reject` | Reject proposal (no changes) |
+| `POST` | `/api/proposals/{id}/restore` | Undo: restore ledger from the pre-execution snapshot |
 | `GET` | `/api/audit` | Audit log of executed cell writes |
+| `GET` | `/api/ledger/preview` | Read-only JSON preview of a sheet (`?sheet=&limit=`) |
 | `GET` | `/api/ledger/download` | Download current ledger.xlsx |
 
 ---
@@ -150,6 +159,12 @@ The `ai_client.py` retries once on Google 503 UNAVAILABLE errors with a 3-second
 
 ### 5. Pydantic `CellAction` is lenient
 `new_value` accepts `str | float | int | list` because Gemini sometimes puts row data in `new_value` instead of `values` for `insert_row` operations. The validator auto-normalizes this.
+
+### 6. Reports are computed, not generated
+`report_engine.py` sums Trial Balance / Balance Sheet / Income Statement directly from the GeneralLedger rows (column positions auto-detected from headers). The AI only triggers the request; it never supplies the figures. Unknown report types fall back to the AI's structure, clearly labelled as estimated.
+
+### 7. Snapshot restore (undo)
+A snapshot of `ledger.xlsx` is saved to SQLite before every execution. `POST /api/proposals/{id}/restore` writes that blob back under the file lock, so any executed change is reversible from the UI.
 
 ---
 
@@ -219,8 +234,7 @@ The AI returns one of two JSON shapes:
 
 ## Known Issues & Limitations
 
-1. **No undo button in UI** — Snapshots are stored in SQLite but there's no UI to restore from them
-2. **No real authentication** — Anyone with network access can approve/reject
+1. **No real authentication** — Anyone with network access can approve/reject
 3. **CDN Tailwind** — Not production-ready; should be replaced with a local build
 4. **Single-user** — No concurrent user support or locking
 5. **AI sometimes uses `new_value` for lists** — The Pydantic validator normalizes this, but it's a quirk of Gemini's JSON generation

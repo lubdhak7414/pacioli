@@ -36,10 +36,20 @@ timeout, log level, fiscal year, paths, etc.).
 | `prompts/system_accountant.txt` | System prompt + few-shot examples |
 | `static/index.html` | Single-page dashboard |
 
+## Testing & linting
+```bash
+pip install -r requirements-dev.txt
+ruff check .        # lint (pyflakes + syntax)
+pytest              # run the test suite (tests/)
+```
+CI runs all three on every push and pull request (see
+`.github/workflows/ci.yml`). The `tests/` suite uses an in-memory fixture
+ledger (`tests/conftest.py`) — it never touches `data/ledger.xlsx`.
+
 ## Making changes
 1. Branch from the current working tree.
 2. Keep new config in `config.py`, not scattered constants.
-3. Run `python -m py_compile <file>` (or `ruff check .`) before committing.
+3. Run `ruff check .` and `pytest` before committing.
 4. Manually test the chat → propose → approve flow against a scratch ledger.
 
 ## Code style

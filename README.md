@@ -160,18 +160,26 @@ The proposal panel shows the summary, reasoning, and a preview of every cell cha
 ```
 ai_accountant/
 ├── main.py                     # FastAPI app, API endpoints
-├── ai_client.py                # Gemini SDK wrapper, Pydantic models
+├── ai_client.py                # Gemini SDK wrapper (timeout + retry)
+├── models.py                   # Shared Pydantic models & validation
+├── report_engine.py            # Reports computed from real ledger data
 ├── db.py                       # SQLite async database layer
 ├── ledger_engine.py            # openpyxl read/write/snapshot engine
+├── config.py                   # Central config (env-overridable)
 ├── prompts/
 │   └── system_accountant.txt   # System prompt for the AI model
 ├── data/
 │   ├── ledger.xlsx             # The source-of-truth Excel ledger
-│   └── accountant.db           # SQLite: proposals, chat, snapshots
+│   └── accountant.db           # SQLite: proposals, chat, snapshots, audit
 ├── static/
 │   └── index.html              # Dashboard frontend (Tailwind CSS)
-├── requirements.txt            # Python dependencies
-├── PLAN.md                     # Remaining work / roadmap
+├── tests/                      # pytest suite (report/ledger/models/sanitize)
+├── .github/workflows/ci.yml    # GitHub Actions: ruff + py_compile + pytest
+├── Dockerfile                  # Containerised run
+├── requirements.txt            # Runtime dependencies
+├── requirements-dev.txt        # + pytest, ruff
+├── .env.example                # Environment variable reference
+├── PLAN.md                     # Roadmap / status
 ├── CONTRIBUTING.md             # Dev setup & contribution guide
 ├── HANDOFF.md                  # Project handoff document
 └── README.md                   # This file
@@ -295,13 +303,16 @@ What are our total expenses?
 
 | Limitation | Impact | Workaround |
 |-----------|--------|------------|
-| No authentication | Anyone on the network can access | Set `APP_PASSWORD` env var (planned) |
-| No undo button in UI | Can't revert a mistake from the browser | Download ledger from before the change and replace manually |
-| AI-generated reports may be inaccurate | Numbers come from the AI, not computed from data | Always verify reports against `ledger.xlsx` directly |
-| Single-user only | No concurrent editing support | Only one person should use the app at a time |
-| No fiscal period enforcement | AI may suggest dates outside current year | Check proposal dates before approving |
-| Tailwind via CDN | Not suitable for production deployment | Use a local Tailwind build for production |
-| Python 3.14 compatibility | Some dependency build issues on bleeding-edge Python | Use Python 3.10–3.12 for best compatibility |
+| No authentication | Anyone on the network can access | Run on localhost only; `APP_PASSWORD` gate is planned |
+| Single-user oriented | Concurrent writes are serialised with a file lock, not designed for many users | One person at a time for best results |
+| Tailwind via CDN | Not ideal for production deployment | Use a local Tailwind build for production |
+| Python 3.14 compatibility | Some dependency build issues on bleeding-edge Python | Use Python 3.11–3.12 for best compatibility |
+
+> **Reports are computed from the actual ledger** (`report_engine.py`) — Trial
+> Balance, Balance Sheet, and Income Statement are summed from real data, not
+> guessed by the AI. Only unrecognised report types fall back to AI estimates
+> (clearly labelled). Fiscal-period mismatches are flagged on each proposal, and
+> every executed change can be undone from the **Undo** button (snapshot restore).
 
 ---
 
@@ -316,6 +327,24 @@ LOG_LEVEL=DEBUG uvicorn main:app --port 8000 --reload
 
 # Reset the database (start fresh)
 rm data/accountant.db
+```
+
+### Testing & linting
+
+```bash
+pip install -r requirements-dev.txt
+ruff check .        # lint
+pytest              # run the test suite
+```
+
+CI (`.github/workflows/ci.yml`) runs ruff, byte-compile, and pytest on every
+push and pull request across Python 3.11 and 3.12.
+
+### Docker
+
+```bash
+docker build -t ai-accountant .
+docker run -e GOOGLE_API_KEY=your-key -p 8000:8000 -v "$PWD/data:/app/data" ai-accountant
 ```
 
 ---

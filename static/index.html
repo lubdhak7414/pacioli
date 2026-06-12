@@ -153,18 +153,35 @@
         </div>
       </div>
 
-      <!-- Right: Proposal + History Panel -->
+      <!-- Right: Proposal + Ledger + History Panel -->
       <div id="rightPanel" class="w-1/2 flex flex-col overflow-hidden">
 
+        <!-- Tabs -->
+        <div class="flex border-b border-ledger-border shrink-0 text-sm">
+          <button id="tabProposal" onclick="switchTab('proposal')"
+            class="px-5 py-3 font-medium border-b-2 border-ledger-accent text-white transition">
+            Proposal
+          </button>
+          <button id="tabLedger" onclick="switchTab('ledger')"
+            class="px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition">
+            Ledger
+          </button>
+        </div>
+
         <div class="flex-1 overflow-y-auto chat-scroll p-6">
-          <div id="proposalEmpty" class="h-full flex items-center justify-center text-gray-600 text-sm">
-            <div class="text-center">
-              <div class="text-4xl mb-3 opacity-30">&#9878;</div>
-              <p>No pending proposals</p>
-              <p class="text-xs mt-1 text-gray-700">Proposed edits will appear here for your review</p>
+          <!-- Proposal view -->
+          <div id="proposalView">
+            <div id="proposalEmpty" class="h-full flex items-center justify-center text-gray-600 text-sm py-20">
+              <div class="text-center">
+                <div class="text-4xl mb-3 opacity-30">&#9878;</div>
+                <p>No pending proposals</p>
+                <p class="text-xs mt-1 text-gray-700">Proposed edits will appear here for your review</p>
+              </div>
             </div>
+            <div id="proposalContent" class="hidden"></div>
           </div>
-          <div id="proposalContent" class="hidden"></div>
+          <!-- Ledger view -->
+          <div id="ledgerView" class="hidden"></div>
         </div>
 
         <!-- Past proposals toggle -->
@@ -359,6 +376,7 @@
 
           currentProposalId = p.status === "pending" ? id : null;
 
+          switchTab("proposal");
           proposalEmpty.classList.add("hidden");
           proposalContent.classList.remove("hidden");
 
@@ -398,16 +416,35 @@
             ? '<span class="inline-block w-3 h-3 rounded-full bg-ledger-warn animate-pulse"></span><span class="text-sm font-medium text-ledger-warn">Pending Approval</span>'
             : '<span class="text-sm font-medium text-gray-400">Status:</span>' + statusBadge(p.status);
 
-          var buttonsHtml = isPending
-            ? '<div id="approvalButtons" class="flex gap-3">' +
+          var buttonsHtml;
+          if (isPending) {
+            buttonsHtml = '<div id="approvalButtons" class="flex gap-3">' +
                 '<button onclick="approveProposal(' + p.id + ')" class="flex-1 bg-ledger-success hover:bg-green-600 text-white py-3 rounded-lg text-sm font-medium transition">Approve &amp; Execute</button>' +
                 '<button onclick="rejectProposal(' + p.id + ')" class="flex-1 bg-ledger-danger hover:bg-red-600 text-white py-3 rounded-lg text-sm font-medium transition">Reject</button>' +
-              '</div>'
-            : '<div id="approvalButtons"><p class="text-sm text-gray-500">This proposal has already been ' + escHtml(p.status) + '.</p></div>';
+              '</div>';
+          } else if (p.status === "executed") {
+            buttonsHtml = '<div id="approvalButtons">' +
+                '<p class="text-sm text-gray-500 mb-2">This proposal was executed.</p>' +
+                '<button onclick="restoreProposal(' + p.id + ')" class="w-full bg-ledger-surface border border-ledger-border hover:border-ledger-accent text-gray-300 hover:text-white py-2.5 rounded-lg text-sm font-medium transition">&#8634; Undo (restore ledger to before this change)</button>' +
+              '</div>';
+          } else {
+            buttonsHtml = '<div id="approvalButtons"><p class="text-sm text-gray-500">This proposal has already been ' + escHtml(p.status) + '.</p></div>';
+          }
+
+          var warningsHtml = "";
+          if (p.validation_notes && p.validation_notes.length > 0) {
+            warningsHtml =
+              '<div class="mb-4 bg-ledger-warn/10 border border-ledger-warn/30 rounded-lg px-3 py-2">' +
+                p.validation_notes.map(function(w) {
+                  return '<p class="text-xs text-ledger-warn">&#9888;&#65039; ' + escHtml(w) + '</p>';
+                }).join("") +
+              '</div>';
+          }
 
           proposalContent.innerHTML =
             '<div class="fade-up">' +
               '<div class="flex items-center gap-2 mb-4">' + statusHtml + '<span class="text-xs text-gray-600 ml-auto">#' + p.id + '</span></div>' +
+              warningsHtml +
               '<div class="mb-4">' +
                 '<p class="text-xs text-gray-500 mb-1">Your request</p>' +
                 '<p class="text-sm bg-ledger-bg border border-ledger-border rounded-lg px-3 py-2">' + escHtml(p.user_message) + '</p>' +
@@ -531,6 +568,85 @@
         } else {
           panel.classList.add("hidden");
           arrow.innerHTML = "&#9654;";
+        }
+      }
+
+      // Tabs: proposal <-> ledger
+      function switchTab(tab) {
+        var pv = document.getElementById("proposalView");
+        var lv = document.getElementById("ledgerView");
+        var tp = document.getElementById("tabProposal");
+        var tl = document.getElementById("tabLedger");
+        var active = "border-ledger-accent text-white";
+        var idle = "border-transparent text-gray-500 hover:text-gray-300";
+        if (tab === "ledger") {
+          pv.classList.add("hidden");
+          lv.classList.remove("hidden");
+          tl.className = "px-5 py-3 font-medium border-b-2 transition " + active;
+          tp.className = "px-5 py-3 font-medium border-b-2 transition " + idle;
+          loadLedgerPreview();
+        } else {
+          lv.classList.add("hidden");
+          pv.classList.remove("hidden");
+          tp.className = "px-5 py-3 font-medium border-b-2 transition " + active;
+          tl.className = "px-5 py-3 font-medium border-b-2 transition " + idle;
+        }
+      }
+
+      // Read-only ledger preview
+      var ledgerSheet = "GeneralLedger";
+      async function loadLedgerPreview(sheet) {
+        if (sheet) ledgerSheet = sheet;
+        var view = document.getElementById("ledgerView");
+        view.innerHTML = '<p class="text-xs text-gray-600 animate-pulse">Loading ledger...</p>';
+        try {
+          var res = await fetch("/api/ledger/preview?sheet=" + encodeURIComponent(ledgerSheet) + "&limit=100");
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          var data = await res.json();
+
+          var tabs = (data.sheets || [ledgerSheet]).map(function(s) {
+            var cls = s === data.sheet
+              ? "bg-ledger-accent text-white"
+              : "bg-ledger-bg text-gray-400 hover:text-white border border-ledger-border";
+            return '<button onclick="loadLedgerPreview(\'' + escHtml(s) + '\')" class="text-xs px-2 py-1 rounded ' + cls + '">' + escHtml(s) + '</button>';
+          }).join(" ");
+
+          var thead = '<tr>' + data.headers.map(function(h) {
+            return '<th class="text-left px-2 py-1 border-b border-ledger-border text-gray-400 font-medium sticky top-0 bg-ledger-surface">' + escHtml(h) + '</th>';
+          }).join("") + '</tr>';
+
+          var tbody = data.rows.map(function(row) {
+            return '<tr class="hover:bg-ledger-surface/50">' + row.map(function(cell) {
+              return '<td class="px-2 py-1 border-b border-ledger-border/40 font-mono text-gray-300">' + escHtml(cell == null ? "" : cell) + '</td>';
+            }).join("") + '</tr>';
+          }).join("");
+
+          view.innerHTML =
+            '<div class="flex gap-2 mb-3 flex-wrap">' + tabs + '</div>' +
+            '<div class="overflow-x-auto"><table class="w-full text-xs border-collapse">' +
+              '<thead>' + thead + '</thead><tbody>' + tbody + '</tbody></table></div>' +
+            '<p class="text-xs text-gray-600 mt-3">Showing up to 100 rows. Download for the full file.</p>';
+        } catch (err) {
+          view.innerHTML = '<p class="text-sm text-ledger-danger">Failed to load ledger preview.</p>';
+        }
+      }
+
+      // Undo (restore from snapshot)
+      async function restoreProposal(id) {
+        if (!confirm("Restore the ledger to its state before proposal #" + id + "? This overwrites the current ledger.")) return;
+        try {
+          var res = await fetch("/api/proposals/" + id + "/restore", { method: "POST" });
+          var data = await res.json();
+          if (res.ok && data.success) {
+            showToast("Ledger restored (before #" + id + ")", "success");
+            addMessage("assistant", "Ledger restored to the state before proposal #" + id + ".");
+            if (!document.getElementById("ledgerView").classList.contains("hidden")) loadLedgerPreview();
+            if (historyOpen) loadHistory();
+          } else {
+            showToast(data.detail || data.message || "Restore failed", "error");
+          }
+        } catch (err) {
+          showToast("Could not reach the server", "error");
         }
       }
 

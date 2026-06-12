@@ -87,12 +87,15 @@ async def get_chat_history(limit: int = 20) -> list[dict]:
 
 
 async def create_proposal(user_message: str, ai_reasoning: str,
-                          actions: list[dict]) -> int:
+                          actions: list[dict],
+                          validation_notes: Optional[list[str]] = None) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            """INSERT INTO proposals (status, user_message, ai_reasoning, actions_json)
-               VALUES ('pending', ?, ?, ?)""",
-            (user_message, ai_reasoning, json.dumps(actions)),
+            """INSERT INTO proposals
+               (status, user_message, ai_reasoning, actions_json, validation_notes)
+               VALUES ('pending', ?, ?, ?, ?)""",
+            (user_message, ai_reasoning, json.dumps(actions),
+             json.dumps(validation_notes or [])),
         )
         await db.commit()
         return cursor.lastrowid
@@ -151,6 +154,19 @@ async def update_proposal_status(proposal_id: int, status: str,
             (status, datetime.utcnow().isoformat(), error_message, proposal_id),
         )
         await db.commit()
+
+
+async def get_snapshot(proposal_id: int) -> Optional[bytes]:
+    """Return the most recent ledger snapshot stored for a proposal, if any."""
+    assert isinstance(proposal_id, int)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT snapshot FROM ledger_snapshots
+               WHERE proposal_id = ? ORDER BY id DESC LIMIT 1""",
+            (proposal_id,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
 
 
 async def save_snapshot(proposal_id: int, snapshot_bytes: bytes):
