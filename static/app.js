@@ -98,9 +98,9 @@ function escHtml(s) {
 // Toast notifications
 function showToast(message, type) {
   var styles = {
-    success: "background: var(--gradient-success); box-shadow: 0 4px 16px rgba(34,197,94,0.3);",
-    error: "background: var(--gradient-danger); box-shadow: 0 4px 16px rgba(239,68,68,0.3);",
-    info: "background: var(--gradient-blue); box-shadow: 0 4px 16px rgba(59,130,246,0.3);",
+    success: "background: #22c55e; box-shadow: 0 4px 12px rgba(34,197,94,0.3);",
+    error: "background: #ef4444; box-shadow: 0 4px 12px rgba(239,68,68,0.3);",
+    info: "background: #3b82f6; box-shadow: 0 4px 12px rgba(59,130,246,0.3);",
   };
   var icons  = { success: "&#10003;", error: "&#10005;", info: "&#9432;" };
   var el = document.createElement("div");
@@ -389,7 +389,7 @@ async function approveProposal(id) {
     var btn = document.getElementById("approveBtn");
     if (btn) {
       btn.textContent = "Confirm Execute?";
-      btn.className = "btn-gradient flex-1 py-3 rounded-xl text-sm transition";
+      btn.className = "btn-primary flex-1 py-3 rounded-xl text-sm transition";
     }
     _confirmTimeout = setTimeout(function() {
       _confirmStep = false;
@@ -561,7 +561,7 @@ async function loadLedgerPreview(sheet) {
 
     var tabs = (data.sheets || [ledgerSheet]).map(function(s) {
       var cls = s === data.sheet
-        ? "btn-gradient text-xs px-3 py-1.5 rounded-lg"
+        ? "btn-primary text-xs px-3 py-1.5 rounded-lg"
         : "btn-ghost text-xs px-3 py-1.5 rounded-lg";
       return '<button onclick="loadLedgerPreview(\'' + escHtml(s) + '\')" class="' + cls + '">' + escHtml(s) + '</button>';
     }).join(" ");

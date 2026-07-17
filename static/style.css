@@ -3,15 +3,9 @@
   --glass-bg: rgba(26, 29, 39, 0.6);
   --glass-bg-solid: #1a1d27;
   --glass-border: rgba(42, 45, 58, 0.5);
-  --gradient-blue: linear-gradient(135deg, #3b82f6, #8b5cf6);
-  --gradient-success: linear-gradient(135deg, #22c55e, #16a34a);
-  --gradient-danger: linear-gradient(135deg, #ef4444, #dc2626);
-  --gradient-warn: linear-gradient(135deg, #f59e0b, #d97706);
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
   --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
   --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
-  --shadow-glow-blue: 0 0 20px rgba(59,130,246,0.15);
-  --shadow-glow-green: 0 0 12px rgba(34,197,94,0.2);
   --transition-fast: 0.15s ease;
   --transition-base: 0.2s ease;
 }
@@ -43,9 +37,9 @@ kbd {
 
 /* ── Top Accent Bar ───────────────────────────────────── */
 .accent-bar {
-  height: 3px;
-  background: var(--gradient-blue);
-  opacity: 0.8;
+  height: 2px;
+  background: #3b82f6;
+  opacity: 0.6;
 }
 
 /* ── Animations ───────────────────────────────────────── */
@@ -54,12 +48,6 @@ kbd {
   to   { opacity: 1; transform: translateY(0); }
 }
 .fade-up { animation: fadeUp 0.3s ease forwards; }
-
-@keyframes fadeScale {
-  from { opacity: 0; transform: scale(0.98); }
-  to   { opacity: 1; transform: scale(1); }
-}
-.fade-scale { animation: fadeScale 0.25s ease forwards; }
 
 @keyframes blink {
   0%, 80%, 100% { opacity: 0.2; transform: scale(0.95); }
@@ -81,58 +69,50 @@ kbd {
 }
 .toast { animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-.spinner { animation: spin 1s linear infinite; }
-
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
-/* ── Gradient Buttons ─────────────────────────────────── */
-.btn-gradient {
-  background: var(--gradient-blue);
+/* ── Buttons ──────────────────────────────────────────── */
+.btn-primary {
+  background: #3b82f6;
   border: none;
   color: white;
   font-weight: 500;
   transition: all var(--transition-base);
-  box-shadow: 0 2px 8px rgba(59,130,246,0.3);
+  box-shadow: 0 2px 6px rgba(59,130,246,0.25);
 }
-.btn-gradient:hover {
-  box-shadow: 0 4px 16px rgba(59,130,246,0.45);
+.btn-primary:hover {
+  background: #2563eb;
+  box-shadow: 0 4px 12px rgba(59,130,246,0.35);
   transform: translateY(-1px);
 }
-.btn-gradient:active {
+.btn-primary:active {
   transform: translateY(0);
-  box-shadow: 0 1px 4px rgba(59,130,246,0.3);
+  box-shadow: 0 1px 3px rgba(59,130,246,0.25);
 }
 
 .btn-success {
-  background: var(--gradient-success);
+  background: #22c55e;
   border: none;
   color: white;
   font-weight: 500;
   transition: all var(--transition-base);
-  box-shadow: 0 2px 8px rgba(34,197,94,0.25);
+  box-shadow: 0 2px 6px rgba(34,197,94,0.2);
 }
 .btn-success:hover {
-  box-shadow: 0 4px 16px rgba(34,197,94,0.4);
+  background: #16a34a;
+  box-shadow: 0 4px 12px rgba(34,197,94,0.3);
   transform: translateY(-1px);
 }
 
 .btn-danger {
-  background: var(--gradient-danger);
+  background: #ef4444;
   border: none;
   color: white;
   font-weight: 500;
   transition: all var(--transition-base);
-  box-shadow: 0 2px 8px rgba(239,68,68,0.25);
+  box-shadow: 0 2px 6px rgba(239,68,68,0.2);
 }
 .btn-danger:hover {
-  box-shadow: 0 4px 16px rgba(239,68,68,0.4);
+  background: #dc2626;
+  box-shadow: 0 4px 12px rgba(239,68,68,0.3);
   transform: translateY(-1px);
 }
 
@@ -155,7 +135,7 @@ kbd {
 .input-glow:focus {
   outline: none;
   border-color: rgba(59,130,246,0.5);
-  box-shadow: 0 0 0 3px rgba(59,130,246,0.15), var(--shadow-sm);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12), var(--shadow-sm);
 }
 
 /* ── Chat Bubbles ─────────────────────────────────────── */
@@ -164,7 +144,7 @@ kbd {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--glass-border);
-  border-left: 2px solid rgba(59,130,246,0.4);
+  border-left: 2px solid rgba(59,130,246,0.35);
   border-radius: 4px 16px 16px 16px;
   box-shadow: var(--shadow-sm);
   transition: box-shadow var(--transition-base);
@@ -174,10 +154,10 @@ kbd {
 }
 
 .bubble-user {
-  background: var(--gradient-blue);
+  background: #3b82f6;
   border: none;
   border-radius: 16px 4px 16px 16px;
-  box-shadow: 0 2px 12px rgba(59,130,246,0.3);
+  box-shadow: 0 2px 8px rgba(59,130,246,0.25);
   color: white;
 }
 
@@ -190,19 +170,19 @@ kbd {
 
 /* ── Status Badges ────────────────────────────────────── */
 .badge-pending {
-  background: var(--gradient-warn);
-  color: white;
-  box-shadow: 0 1px 6px rgba(245,158,11,0.3);
+  background: rgba(245,158,11,0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245,158,11,0.25);
 }
 .badge-executed, .badge-approved {
-  background: var(--gradient-success);
-  color: white;
-  box-shadow: 0 1px 6px rgba(34,197,94,0.3);
+  background: rgba(34,197,94,0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34,197,94,0.25);
 }
 .badge-rejected, .badge-failed {
-  background: var(--gradient-danger);
-  color: white;
-  box-shadow: 0 1px 6px rgba(239,68,68,0.3);
+  background: rgba(239,68,68,0.15);
+  color: #f87171;
+  border: 1px solid rgba(239,68,68,0.25);
 }
 
 /* ── Proposal Cards ───────────────────────────────────── */
@@ -225,11 +205,7 @@ kbd {
 /* ── Tab Underline ────────────────────────────────────── */
 .tab-active {
   color: white;
-  border-bottom: 2px solid transparent;
-  background-image: linear-gradient(var(--glass-bg-solid), var(--glass-bg-solid)),
-                    var(--gradient-blue);
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
+  border-bottom: 2px solid #3b82f6;
 }
 
 /* ── Empty State ──────────────────────────────────────── */
