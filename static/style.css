@@ -1,8 +1,8 @@
 /* ── Design Tokens ─────────────────────────────────────── */
 :root {
-  --glass-bg: rgba(26, 29, 39, 0.6);
-  --glass-bg-solid: #1a1d27;
-  --glass-border: rgba(42, 45, 58, 0.5);
+  --glass-bg: rgba(26, 26, 34, 0.6);
+  --glass-bg-solid: #1a1a22;
+  --glass-border: rgba(42, 42, 52, 0.5);
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
   --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
   --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
@@ -16,7 +16,7 @@ body { font-family: "Inter", sans-serif; line-height: 1.6; }
 h1, h2, h3 { letter-spacing: -0.025em; }
 kbd {
   font-size: 0.65rem; padding: 2px 6px; border-radius: 4px;
-  color: #9ca3af; background: rgba(26,29,39,0.8);
+  color: #9ca3af; background: rgba(26,26,34,0.8);
   border: 1px solid rgba(75,85,99,0.5);
   box-shadow: 0 1px 0 rgba(0,0,0,0.3);
 }
@@ -32,8 +32,8 @@ kbd {
 /* ── Scrollbar ────────────────────────────────────────── */
 .chat-scroll::-webkit-scrollbar { width: 5px; }
 .chat-scroll::-webkit-scrollbar-track { background: transparent; }
-.chat-scroll::-webkit-scrollbar-thumb { background: rgba(42,45,58,0.8); border-radius: 10px; }
-.chat-scroll::-webkit-scrollbar-thumb:hover { background: rgba(75,85,99,0.8); }
+.chat-scroll::-webkit-scrollbar-thumb { background: rgba(42,42,52,0.8); border-radius: 10px; }
+.chat-scroll::-webkit-scrollbar-thumb:hover { background: rgba(60,60,72,0.8); }
 
 /* ── Top Accent Bar ───────────────────────────────────── */
 .accent-bar {
@@ -117,13 +117,13 @@ kbd {
 }
 
 .btn-ghost {
-  background: rgba(26,29,39,0.5);
+  background: rgba(26,26,34,0.5);
   border: 1px solid var(--glass-border);
   color: #d1d5db;
   transition: all var(--transition-base);
 }
 .btn-ghost:hover {
-  background: rgba(42,45,58,0.6);
+  background: rgba(42,42,52,0.6);
   border-color: rgba(59,130,246,0.3);
   color: white;
 }
@@ -223,7 +223,7 @@ kbd {
   transition: all var(--transition-base);
 }
 .history-item:hover {
-  background: rgba(26,29,39,0.6);
+  background: rgba(26,26,34,0.6);
   border-color: rgba(59,130,246,0.3);
   box-shadow: var(--shadow-sm);
 }
@@ -231,7 +231,7 @@ kbd {
 /* ── Markdown Content ─────────────────────────────────── */
 .md-content table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.75rem; }
 .md-content th {
-  background: rgba(26,29,39,0.8); border: 1px solid var(--glass-border);
+  background: rgba(26,26,34,0.8); border: 1px solid var(--glass-border);
   padding: 6px 10px; text-align: left; font-weight: 600; color: #9ca3af;
 }
 .md-content td {
