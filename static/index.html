@@ -37,19 +37,22 @@
   </head>
   <body class="bg-ledger-bg text-gray-200 h-screen flex flex-col">
 
+    <!-- Top accent bar -->
+    <div class="accent-bar shrink-0"></div>
+
     <!-- Header -->
-    <header class="border-b border-ledger-border px-6 py-4 flex items-center justify-between shrink-0">
+    <header class="glass border-b px-6 py-4 flex items-center justify-between shrink-0" style="border-color: var(--glass-border);">
       <div class="flex items-center gap-3">
-        <img src="/static/logo_doubleentry.svg" width="36" height="36" alt="Pacioli logo" />
+        <img src="/static/logo_doubleentry.svg" width="36" height="36" alt="Pacioli logo" class="transition hover:drop-shadow-[0_0_8px_rgba(59,130,246,0.4)]" />
         <div>
-          <h1 class="text-lg font-semibold text-white">Pacioli</h1>
-          <p class="text-xs text-gray-500">Human-in-the-Loop Ledger Management</p>
+          <h1 class="text-lg font-bold text-white tracking-tight">Pacioli</h1>
+          <p class="text-xs text-gray-500" style="letter-spacing: 0.02em;">Human-in-the-Loop Ledger Management</p>
         </div>
       </div>
       <div class="flex items-center gap-4">
-        <button id="helpBtn" onclick="showExamples()" title="Show example prompts" class="text-xs text-gray-500 hover:text-gray-300 transition border border-ledger-border rounded-lg px-2 py-1 hover:border-ledger-accent">?</button>
-        <span id="healthDot" title="System health" class="w-2 h-2 rounded-full bg-gray-600"></span>
-        <a href="/api/ledger/download" class="text-sm text-ledger-accent hover:underline">Download ledger.xlsx</a>
+        <button id="helpBtn" onclick="showExamples()" title="Show example prompts" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5">?</button>
+        <span id="healthDot" title="System health" class="w-2.5 h-2.5 rounded-full bg-gray-600 health-pulse"></span>
+        <a href="/api/ledger/download" class="text-sm text-ledger-accent hover:text-white transition" style="text-underline-offset: 3px;">Download ledger.xlsx</a>
       </div>
     </header>
 
@@ -57,71 +60,73 @@
     <div id="mainLayout" class="flex flex-1 overflow-hidden">
 
       <!-- Left: Chat Panel -->
-      <div id="leftPanel" class="w-1/2 flex flex-col border-r border-ledger-border">
+      <div id="leftPanel" class="w-1/2 flex flex-col" style="border-right: 1px solid var(--glass-border);">
 
         <!-- Search bar -->
-        <div class="px-4 pt-3 pb-2 shrink-0 border-b border-ledger-border/50 flex items-center gap-2">
+        <div class="px-4 pt-3 pb-2 shrink-0 flex items-center gap-2" style="border-bottom: 1px solid rgba(42,45,58,0.3);">
           <input
             type="text"
             id="searchInput"
             placeholder="Search messages..."
-            class="flex-1 bg-ledger-surface border border-ledger-border rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-ledger-accent placeholder-gray-600 transition"
+            class="input-glow flex-1 rounded-lg px-3 py-1.5 text-xs placeholder-gray-600"
+            style="background: rgba(15,17,23,0.5); border: 1px solid var(--glass-border);"
           />
           <span id="searchCount" class="text-xs text-gray-600 shrink-0"></span>
         </div>
 
         <!-- Chat messages -->
-        <div id="chatMessages" class="flex-1 overflow-y-auto chat-scroll p-6 space-y-4">
+        <div id="chatMessages" class="flex-1 overflow-y-auto chat-scroll p-6 space-y-6">
           <div class="fade-up flex gap-3" id="greetingMsg">
-            <div class="w-7 h-7 rounded-full bg-ledger-accent/20 flex items-center justify-center text-xs text-ledger-accent shrink-0 mt-0.5">AI</div>
-            <div class="bg-ledger-surface border border-ledger-border rounded-xl px-4 py-3 max-w-[85%]">
-              <p class="text-sm">Hello! I'm Pacioli. I can record transactions, generate reports, and manage your general ledger. What would you like to do?</p>
+            <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs shrink-0 mt-0.5" style="background: rgba(59,130,246,0.15); color: #60a5fa;">AI</div>
+            <div class="bubble-assistant px-4 py-3 max-w-[85%]">
+              <p class="text-sm leading-relaxed">Hello! I'm Pacioli. I can record transactions, generate reports, and manage your general ledger. What would you like to do?</p>
             </div>
           </div>
         </div>
 
         <!-- Example prompts (between chat and input) -->
         <div id="examplePromptsWrap" class="px-4 pb-2 shrink-0">
-          <div id="examplePrompts" class="flex flex-col gap-2">
+          <div id="examplePrompts" class="flex flex-col gap-1.5">
             <button onclick="sendExample('Record a $1,000 cash payment for office supplies')"
-              class="text-left text-xs px-3 py-2 rounded-lg border border-ledger-border bg-ledger-surface hover:border-ledger-accent hover:text-white transition text-gray-400">
+              class="btn-ghost text-left text-xs px-3 py-2 rounded-lg">
               Record a $1,000 cash payment for office supplies
             </button>
             <button onclick="sendExample('Record $3,500 revenue received from a client')"
-              class="text-left text-xs px-3 py-2 rounded-lg border border-ledger-border bg-ledger-surface hover:border-ledger-accent hover:text-white transition text-gray-400">
+              class="btn-ghost text-left text-xs px-3 py-2 rounded-lg">
               Record $3,500 revenue received from a client
             </button>
             <button onclick="sendExample('Show me the current balance sheet')"
-              class="text-left text-xs px-3 py-2 rounded-lg border border-ledger-border bg-ledger-surface hover:border-ledger-accent hover:text-white transition text-gray-400">
+              class="btn-ghost text-left text-xs px-3 py-2 rounded-lg">
               Show me the current balance sheet
             </button>
           </div>
         </div>
 
         <!-- Input area -->
-        <div class="p-4 border-t border-ledger-border shrink-0">
+        <div class="p-4 shrink-0" style="border-top: 1px solid rgba(42,45,58,0.3);">
           <form id="chatForm" class="flex gap-2">
             <input
               type="text"
               id="chatInput"
               placeholder="e.g. Record a $5,000 office supplies purchase on credit..."
-              class="flex-1 bg-ledger-surface border border-ledger-border rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-ledger-accent transition placeholder-gray-600"
+              class="input-glow flex-1 rounded-lg px-4 py-3 text-sm placeholder-gray-600"
+              style="background: rgba(15,17,23,0.5); border: 1px solid var(--glass-border);"
             />
             <button
               type="submit"
               id="sendBtn"
-              class="bg-ledger-accent hover:bg-blue-600 text-white px-5 py-3 rounded-lg text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+              class="btn-gradient px-5 py-3 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Send
             </button>
           </form>
-          <p class="text-xs mt-2 flex items-center justify-between">
+          <p class="text-xs mt-2 flex items-center justify-between text-gray-500">
             <span>
               <kbd>Ctrl+Y</kbd> approve &nbsp;
               <kbd>Ctrl+N</kbd> focus chat &nbsp;
               <kbd>Esc</kbd> clear
             </span>
-            <span id="charCount" class="text-gray-600">0 / 500</span>
+            <span id="charCount">0 / 500</span>
           </p>
         </div>
       </div>
@@ -130,9 +135,9 @@
       <div id="rightPanel" class="w-1/2 flex flex-col overflow-hidden">
 
         <!-- Tabs -->
-        <div class="flex border-b border-ledger-border shrink-0 text-sm">
+        <div class="flex shrink-0 text-sm" style="border-bottom: 1px solid var(--glass-border);">
           <button id="tabProposal" onclick="switchTab('proposal')"
-            class="px-5 py-3 font-medium border-b-2 border-ledger-accent text-white transition">
+            class="tab-active px-5 py-3 font-medium transition">
             Proposal
           </button>
           <button id="tabLedger" onclick="switchTab('ledger')"
@@ -146,8 +151,8 @@
           <div id="proposalView">
             <div id="proposalEmpty" class="h-full flex items-center justify-center text-gray-600 text-sm py-20">
               <div class="text-center">
-                <div class="text-4xl mb-3 opacity-30">&#9878;</div>
-                <p>No pending proposals</p>
+                <div class="empty-state-icon mb-3">&#9878;</div>
+                <p class="font-medium">No pending proposals</p>
                 <p class="text-xs mt-1 text-gray-700">Proposed edits will appear here for your review</p>
               </div>
             </div>
@@ -158,16 +163,16 @@
         </div>
 
         <!-- Past proposals toggle -->
-        <div class="border-t border-ledger-border px-6 py-3 shrink-0">
+        <div class="px-6 py-3 shrink-0" style="border-top: 1px solid rgba(42,45,58,0.3);">
           <button
             id="historyToggle"
             onclick="toggleHistory()"
             class="w-full text-left text-xs text-gray-500 hover:text-gray-300 transition flex items-center gap-2"
           >
-            <span id="historyArrow" class="text-gray-600">&#9654;</span>
+            <span id="historyArrow" class="text-gray-600 transition-transform">&#9654;</span>
             <span>Past Proposals</span>
           </button>
-          <div id="historyPanel" class="hidden mt-3 space-y-2 max-h-72 overflow-y-auto chat-scroll"></div>
+          <div id="historyPanel" class="hidden mt-3 space-y-1.5 max-h-72 overflow-y-auto chat-scroll"></div>
         </div>
       </div>
     </div>

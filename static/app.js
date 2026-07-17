@@ -97,12 +97,16 @@ function escHtml(s) {
 
 // Toast notifications
 function showToast(message, type) {
-  var colors = { success: "bg-green-600", error: "bg-red-600", info: "bg-blue-600" };
+  var styles = {
+    success: "background: var(--gradient-success); box-shadow: 0 4px 16px rgba(34,197,94,0.3);",
+    error: "background: var(--gradient-danger); box-shadow: 0 4px 16px rgba(239,68,68,0.3);",
+    info: "background: var(--gradient-blue); box-shadow: 0 4px 16px rgba(59,130,246,0.3);",
+  };
   var icons  = { success: "&#10003;", error: "&#10005;", info: "&#9432;" };
   var el = document.createElement("div");
-  el.className = "toast fixed bottom-6 right-6 " + (colors[type] || colors.info) +
-    " text-white px-4 py-3 rounded-lg text-sm shadow-xl z-50 flex items-center gap-2";
-  el.innerHTML = "<span class='font-bold'>" + (icons[type] || icons.info) + "</span><span>" + escHtml(message) + "</span>";
+  el.className = "toast fixed bottom-6 right-6 text-white px-4 py-3 rounded-xl text-sm z-50 flex items-center gap-2 font-medium";
+  el.style.cssText = styles[type] || styles.info;
+  el.innerHTML = "<span>" + (icons[type] || icons.info) + "</span><span>" + escHtml(message) + "</span>";
   document.body.appendChild(el);
   setTimeout(function() { el.remove(); }, 3000);
 }
@@ -110,14 +114,14 @@ function showToast(message, type) {
 // Status badge
 function statusBadge(status) {
   var map = {
-    pending:  "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-    executed: "bg-green-500/20 text-green-400 border-green-500/30",
-    approved: "bg-green-500/20 text-green-400 border-green-500/30",
-    rejected: "bg-red-500/20 text-red-400 border-red-500/30",
-    failed:   "bg-red-500/20 text-red-400 border-red-500/30",
+    pending:  "badge-pending",
+    executed: "badge-executed",
+    approved: "badge-approved",
+    rejected: "badge-rejected",
+    failed:   "badge-failed",
   };
-  var cls = map[status] || "bg-gray-500/20 text-gray-400 border-gray-500/30";
-  return '<span class="ml-1 text-xs font-mono px-1.5 py-0.5 rounded border ' + cls + '">' + escHtml(status) + '</span>';
+  var cls = map[status] || "bg-gray-500/20 text-gray-400";
+  return '<span class="ml-1 text-xs font-mono px-2 py-0.5 rounded-full ' + cls + '">' + escHtml(status) + '</span>';
 }
 
 // Add message to chat
@@ -133,20 +137,18 @@ function addMessage(role, text, proposalId) {
 
   var contentHtml = "";
   if (isUser) {
-    contentHtml = '<div class="bg-ledger-accent text-white rounded-xl px-4 py-3 max-w-[85%] text-sm">' + escHtml(text) + '</div>';
+    contentHtml = '<div class="bubble-user px-4 py-3 max-w-[85%] text-sm">' + escHtml(text) + '</div>';
   } else {
     var isError = /\b(validation|error|failed|couldn.t|trouble|timed out)\b/i.test(text);
-    var msgClass = isError
-      ? "bg-red-500/10 border border-ledger-danger/30 text-gray-300"
-      : "bg-ledger-surface border border-ledger-border text-gray-200";
+    var bubbleClass = isError ? "bubble-error" : "bubble-assistant";
     var icon = isError ? '<span class="mr-1 shrink-0">&#9888;&#65039;</span>' : "";
     var badge = proposalId
-      ? '<span class="ml-2 text-xs font-mono px-1.5 py-0.5 rounded border bg-yellow-500/20 text-yellow-400 border-yellow-500/30">#' + proposalId + '</span>'
+      ? '<span class="ml-2 badge-pending text-xs font-mono px-2 py-0.5 rounded-full inline-block">#' + proposalId + '</span>'
       : "";
     var rendered = renderMarkdown(text);
     contentHtml =
-      '<div class="w-7 h-7 rounded-full bg-ledger-accent/20 flex items-center justify-center text-xs text-ledger-accent shrink-0 mt-0.5">AI</div>' +
-      '<div class="' + msgClass + ' rounded-xl px-4 py-3 max-w-[85%] text-sm">' +
+      '<div class="w-7 h-7 rounded-full flex items-center justify-center text-xs shrink-0 mt-0.5" style="background: rgba(59,130,246,0.15); color: #60a5fa;">AI</div>' +
+      '<div class="' + bubbleClass + ' px-4 py-3 max-w-[85%] text-sm">' +
         '<div class="flex items-start justify-between gap-2">' +
           '<div class="flex-1 md-content">' + icon + rendered + badge + '</div>' +
           '<button class="copy-btn shrink-0 text-gray-600 hover:text-gray-300 text-xs px-1 py-0.5 rounded transition" onclick="copyMessage(this)" title="Copy to clipboard">&#128203;</button>' +
@@ -209,8 +211,8 @@ function showTyping() {
   el.id = "typingIndicator";
   el.className = "fade-up flex gap-3";
   el.innerHTML =
-    '<div class="w-7 h-7 rounded-full bg-ledger-accent/20 flex items-center justify-center text-xs text-ledger-accent shrink-0">AI</div>' +
-    '<div class="bg-ledger-surface border border-ledger-border rounded-xl px-4 py-3 flex items-center">' +
+    '<div class="w-7 h-7 rounded-full flex items-center justify-center text-xs shrink-0" style="background: rgba(59,130,246,0.15); color: #60a5fa;">AI</div>' +
+    '<div class="bubble-assistant px-4 py-3 flex items-center">' +
       '<span class="typing-dot inline-block w-2 h-2 bg-gray-500 rounded-full mr-1"></span>' +
       '<span class="typing-dot inline-block w-2 h-2 bg-gray-500 rounded-full mr-1"></span>' +
       '<span class="typing-dot inline-block w-2 h-2 bg-gray-500 rounded-full"></span>' +
@@ -303,7 +305,7 @@ async function loadProposal(id) {
             '</div>';
         }
         return (
-          '<div class="bg-ledger-bg border border-ledger-border rounded-lg p-3">' +
+          '<div class="proposal-card p-3">' +
             '<div class="flex items-center gap-2 mb-2 flex-wrap">' +
               '<span class="text-xs font-mono px-2 py-0.5 rounded bg-ledger-accent/10 text-ledger-accent">' + escHtml(a.operation) + '</span>' +
               '<span class="text-xs text-gray-500">' + escHtml(a.sheet) + '!' + escHtml(a.cell_ref || a.start_cell || "Row " + a.row_index) + '</span>' +
@@ -323,13 +325,13 @@ async function loadProposal(id) {
     var buttonsHtml;
     if (isPending) {
       buttonsHtml = '<div id="approvalButtons" class="flex gap-3">' +
-          '<button id="approveBtn" onclick="approveProposal(' + p.id + ')" class="flex-1 bg-ledger-success hover:bg-green-600 text-white py-3 rounded-lg text-sm font-medium transition">Approve &amp; Execute</button>' +
-          '<button onclick="rejectProposal(' + p.id + ')" class="flex-1 bg-ledger-danger hover:bg-red-600 text-white py-3 rounded-lg text-sm font-medium transition">Reject</button>' +
+          '<button id="approveBtn" onclick="approveProposal(' + p.id + ')" class="btn-success flex-1 py-3 rounded-xl text-sm transition">Approve &amp; Execute</button>' +
+          '<button onclick="rejectProposal(' + p.id + ')" class="btn-danger flex-1 py-3 rounded-xl text-sm transition">Reject</button>' +
         '</div>';
     } else if (p.status === "executed") {
       buttonsHtml = '<div id="approvalButtons">' +
           '<p class="text-sm text-gray-500 mb-2">This proposal was executed.</p>' +
-          '<button onclick="restoreProposal(' + p.id + ')" class="w-full bg-ledger-surface border border-ledger-border hover:border-ledger-accent text-gray-300 hover:text-white py-2.5 rounded-lg text-sm font-medium transition">&#8634; Undo (restore ledger to before this change)</button>' +
+          '<button onclick="restoreProposal(' + p.id + ')" class="btn-ghost w-full py-2.5 rounded-xl text-sm font-medium transition">&#8634; Undo (restore ledger to before this change)</button>' +
         '</div>';
     } else {
       buttonsHtml = '<div id="approvalButtons"><p class="text-sm text-gray-500">This proposal has already been ' + escHtml(p.status) + '.</p></div>';
@@ -387,14 +389,14 @@ async function approveProposal(id) {
     var btn = document.getElementById("approveBtn");
     if (btn) {
       btn.textContent = "Confirm Execute?";
-      btn.className = "flex-1 bg-yellow-500 hover:bg-yellow-600 text-white py-3 rounded-lg text-sm font-medium transition";
+      btn.className = "btn-gradient flex-1 py-3 rounded-xl text-sm transition";
     }
     _confirmTimeout = setTimeout(function() {
       _confirmStep = false;
       var btn = document.getElementById("approveBtn");
       if (btn) {
         btn.textContent = "Approve & Execute";
-        btn.className = "flex-1 bg-ledger-success hover:bg-green-600 text-white py-3 rounded-lg text-sm font-medium transition";
+        btn.className = "btn-success flex-1 py-3 rounded-xl text-sm transition";
       }
     }, 5000);
     return;
@@ -492,7 +494,7 @@ async function loadHistory() {
         ? p.user_message.slice(0, 55) + "..."
         : p.user_message;
       return (
-        '<div class="flex items-center gap-2 p-2 rounded-lg bg-ledger-bg border border-ledger-border cursor-pointer hover:border-ledger-accent/50 transition text-xs" onclick="loadProposal(' + p.id + ')">' +
+        '<div class="history-item flex items-center gap-2 p-2 cursor-pointer text-xs" onclick="loadProposal(' + p.id + ')">' +
           '<span class="font-mono text-gray-600 shrink-0">#' + p.id + '</span>' +
           statusBadge(p.status) +
           '<span class="text-gray-400 flex-1 truncate ml-1">' + escHtml(truncated) + '</span>' +
@@ -559,9 +561,9 @@ async function loadLedgerPreview(sheet) {
 
     var tabs = (data.sheets || [ledgerSheet]).map(function(s) {
       var cls = s === data.sheet
-        ? "bg-ledger-accent text-white"
-        : "bg-ledger-bg text-gray-400 hover:text-white border border-ledger-border";
-      return '<button onclick="loadLedgerPreview(\'' + escHtml(s) + '\')" class="text-xs px-3 py-1.5 rounded ' + cls + '">' + escHtml(s) + '</button>';
+        ? "btn-gradient text-xs px-3 py-1.5 rounded-lg"
+        : "btn-ghost text-xs px-3 py-1.5 rounded-lg";
+      return '<button onclick="loadLedgerPreview(\'' + escHtml(s) + '\')" class="' + cls + '">' + escHtml(s) + '</button>';
     }).join(" ");
 
     // Empty state
@@ -569,8 +571,8 @@ async function loadLedgerPreview(sheet) {
       view.innerHTML =
         '<div class="flex gap-2 mb-4 flex-wrap">' + tabs + '</div>' +
         '<div class="text-center py-12 text-gray-600">' +
-          '<div class="text-3xl mb-3 opacity-30">&#128203;</div>' +
-          '<p class="text-sm">No data in <strong>' + escHtml(data.sheet) + '</strong></p>' +
+          '<div class="empty-state-icon mb-3">&#128203;</div>' +
+          '<p class="font-medium">No data in <strong class="text-gray-400">' + escHtml(data.sheet) + '</strong></p>' +
           '<p class="text-xs mt-1 text-gray-700">Record a transaction to see it here</p>' +
         '</div>';
       return;
@@ -666,11 +668,11 @@ async function checkHealth() {
     var res = await fetch("/api/health");
     var data = await res.json();
     dot.className = data.status === "ok"
-      ? "w-2 h-2 rounded-full bg-green-500"
-      : "w-2 h-2 rounded-full bg-yellow-500";
+      ? "w-2.5 h-2.5 rounded-full bg-green-500 health-pulse"
+      : "w-2.5 h-2.5 rounded-full bg-yellow-500";
     dot.title = "Status: " + data.status + " | DB: " + data.database + " | Ledger: " + (data.ledger_exists ? "found" : "missing");
   } catch (e) {
-    dot.className = "w-2 h-2 rounded-full bg-red-500";
+    dot.className = "w-2.5 h-2.5 rounded-full bg-red-500";
     dot.title = "Server unreachable";
   }
 }
