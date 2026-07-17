@@ -61,7 +61,7 @@
     <div id="mainLayout" class="flex flex-1 overflow-hidden">
 
       <!-- Left: Chat Panel -->
-      <div id="leftPanel" class="w-1/2 flex flex-col" style="border-right: 1px solid var(--glass-border);">
+      <div id="leftPanel" class="flex flex-col" style="width: 50%; min-width: 25%; max-width: 75%;">
 
         <!-- Search bar -->
         <div class="px-4 pt-3 pb-2 shrink-0 flex items-center gap-2" style="border-bottom: 1px solid rgba(42,45,58,0.3);">
@@ -132,8 +132,11 @@
         </div>
       </div>
 
+      <!-- Draggable divider -->
+      <div id="divider" class="resize-handle shrink-0"></div>
+
       <!-- Right: Proposal + Ledger + History Panel -->
-      <div id="rightPanel" class="w-1/2 flex flex-col overflow-hidden">
+      <div id="rightPanel" class="flex flex-col flex-1 overflow-hidden">
 
         <!-- Tabs -->
         <div class="flex shrink-0 text-sm" style="border-bottom: 1px solid var(--glass-border);">

@@ -694,3 +694,38 @@ setInterval(checkHealth, 60000);
     console.error("Failed to load chat history", err);
   }
 })();
+
+// ── Draggable divider ──────────────────────────────────────
+(function() {
+  var divider = document.getElementById("divider");
+  var leftPanel = document.getElementById("leftPanel");
+  var mainLayout = document.getElementById("mainLayout");
+  var dragging = false;
+
+  divider.addEventListener("mousedown", function(e) {
+    e.preventDefault();
+    dragging = true;
+    divider.classList.add("dragging");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  });
+
+  document.addEventListener("mousemove", function(e) {
+    if (!dragging) return;
+    var rect = mainLayout.getBoundingClientRect();
+    var offsetX = e.clientX - rect.left;
+    var totalWidth = rect.width;
+    var pct = (offsetX / totalWidth) * 100;
+    // Clamp between 25% and 75%
+    pct = Math.max(25, Math.min(75, pct));
+    leftPanel.style.width = pct + "%";
+  });
+
+  document.addEventListener("mouseup", function() {
+    if (!dragging) return;
+    dragging = false;
+    divider.classList.remove("dragging");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  });
+})();

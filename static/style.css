@@ -249,6 +249,41 @@ kbd {
 .md-content hr { border: none; border-top: 1px solid var(--glass-border); margin: 10px 0; }
 .md-content strong { color: #f3f4f6; }
 
+/* ── Draggable Divider ────────────────────────────────── */
+.resize-handle {
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background var(--transition-fast);
+  position: relative;
+}
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 32px;
+  background: rgba(75,85,99,0.4);
+  border-radius: 2px;
+  transition: background var(--transition-fast), height var(--transition-fast);
+}
+.resize-handle:hover {
+  background: rgba(59,130,246,0.1);
+}
+.resize-handle:hover::after {
+  background: rgba(59,130,246,0.5);
+  height: 48px;
+}
+.resize-handle.dragging {
+  background: rgba(59,130,246,0.15);
+}
+.resize-handle.dragging::after {
+  background: #3b82f6;
+  height: 48px;
+}
+
 /* ── Mobile ───────────────────────────────────────────── */
 @media (max-width: 768px) {
   #leftPanel  { width: 100%; border-right: none; border-bottom: 1px solid var(--glass-border); max-height: 55vh; }
