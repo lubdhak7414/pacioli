@@ -33,6 +33,7 @@ data/ledger.xlsx.bak*
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
+uv.lock
 
 # ── Editor / OS ───────────────────────────────────────────
 .idea/

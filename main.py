@@ -48,12 +48,14 @@ def sanitize_input(text: str) -> str:
 
 def fiscal_warnings(actions) -> list[str]:
     """Flag insert_row transactions dated outside the configured fiscal year (item 1.3)."""
+    seen: set[str] = set()
     warnings: list[str] = []
     for a in actions:
         if a.operation == OperationType.INSERT_ROW and a.values:
             date_val = a.values[0]
             if isinstance(date_val, str) and date_val[:4].isdigit():
-                if int(date_val[:4]) != config.FISCAL_YEAR:
+                if int(date_val[:4]) != config.FISCAL_YEAR and date_val not in seen:
+                    seen.add(date_val)
                     warnings.append(
                         f"Transaction dated {date_val} is outside fiscal year "
                         f"{config.FISCAL_YEAR}."
@@ -140,6 +142,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from fastapi.staticfiles import StaticFiles
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.middleware("http")

@@ -11,6 +11,12 @@
 
 ---
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Pacioli Dashboard" width="100%" />
+</p>
+
+---
+
 ## Overview
 
 Pacioli is a bookkeeping system that lets an operator drive a double-entry Excel ledger through natural language, **without ever delegating financial correctness to a language model.**
