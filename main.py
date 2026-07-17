@@ -579,19 +579,27 @@ async def download_report_csv(report_type: str):
     import io
     from fastapi.responses import StreamingResponse
 
-    if report_type == "trial_balance":
+    # Map URL slug to internal name
+    type_map = {
+        "trial-balance": "trial_balance",
+        "income-statement": "income_statement",
+        "balance-sheet": "balance_sheet",
+    }
+    internal_type = type_map.get(report_type, report_type)
+
+    if internal_type == "trial_balance":
         report = report_engine.trial_balance()
         rows = report.get("rows", [])
         headers = ["Account", "Name", "Debit", "Credit"]
         data = [[r["account"], r["name"], r["debit"], r["credit"]] for r in rows]
-        data.append(["", "TOTAL", report["total_debit"], report["total_access"]])
-    elif report_type == "income_statement":
+        data.append(["", "TOTAL", report["total_debit"], report["total_credit"]])
+    elif internal_type == "income_statement":
         report = report_engine.income_statement()
         rows = report.get("revenue", []) + report.get("expenses", [])
         headers = ["Account", "Name", "Amount"]
         data = [[r["account"], r["name"], r["amount"]] for r in rows]
         data.append(["", "Net Income", report["net_income"]])
-    elif report_type == "balance_sheet":
+    elif internal_type == "balance_sheet":
         report = report_engine.balance_sheet()
         sections = report.get("assets", []) + report.get("liabilities", []) + report.get("equity", [])
         headers = ["Account", "Name", "Amount"]
@@ -610,6 +618,105 @@ async def download_report_csv(report_type: str):
         iter([output.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={report_type}.csv"},
+    )
+
+
+@app.get("/api/reports/{report_type}/xlsx", summary="Download report as XLSX")
+async def download_report_xlsx(report_type: str):
+    from openpyxl import Workbook
+    from fastapi.responses import StreamingResponse
+    import io
+
+    type_map = {
+        "trial-balance": "trial_balance",
+        "income-statement": "income_statement",
+        "balance-sheet": "balance_sheet",
+    }
+    internal_type = type_map.get(report_type, report_type)
+
+    wb = Workbook()
+    ws = wb.active
+
+    if internal_type == "trial_balance":
+        report = report_engine.trial_balance()
+        ws.title = "Trial Balance"
+        ws.append(["Account", "Name", "Debit", "Credit"])
+        for r in report.get("rows", []):
+            ws.append([r["account"], r["name"], r["debit"], r["credit"]])
+        ws.append(["", "TOTAL", report["total_debit"], report["total_credit"]])
+    elif internal_type == "income_statement":
+        report = report_engine.income_statement()
+        ws.title = "Income Statement"
+        ws.append(["Account", "Name", "Amount"])
+        for r in report.get("revenue", []):
+            ws.append([r["account"], r["name"], r["amount"]])
+        ws.append(["", "Total Revenue", report["total_revenue"]])
+        ws.append([])
+        for r in report.get("expenses", []):
+            ws.append([r["account"], r["name"], r["amount"]])
+        ws.append(["", "Total Expenses", report["total_expenses"]])
+        ws.append(["", "Net Income", report["net_income"]])
+    elif internal_type == "balance_sheet":
+        report = report_engine.balance_sheet()
+        ws.title = "Balance Sheet"
+        ws.append(["Account", "Name", "Amount"])
+        ws.append(["--- Assets ---", "", ""])
+        for r in report.get("assets", []):
+            ws.append([r["account"], r["name"], r["amount"]])
+        ws.append(["", "Total Assets", report["total_assets"]])
+        ws.append([])
+        ws.append(["--- Liabilities ---", "", ""])
+        for r in report.get("liabilities", []):
+            ws.append([r["account"], r["name"], r["amount"]])
+        ws.append(["", "Total Liabilities", report["total_liabilities"]])
+        ws.append([])
+        ws.append(["--- Equity ---", "", ""])
+        for r in report.get("equity", []):
+            ws.append([r["account"], r["name"], r["amount"]])
+        ws.append(["", "Net Income", report["net_income"]])
+        ws.append(["", "Total Equity", report["total_equity"]])
+        ws.append(["", "Total L+E", report["total_liabilities"] + report["total_equity"]])
+    else:
+        raise HTTPException(404, f"Unknown report type: {report_type}")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={report_type}.xlsx"},
+    )
+
+
+@app.get("/api/transactions/csv", summary="Download transactions as CSV")
+async def download_transactions_csv():
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    async with aiosqlite.connect(db.DB_PATH) as conn:
+        conn.row_factory = aiosqlite.Row
+        cursor = await conn.execute("""
+            SELECT a.*, p.user_message, p.created_at as proposal_date
+            FROM audit_log a
+            LEFT JOIN proposals p ON a.proposal_id = p.id
+            WHERE a.action_index >= 0
+            ORDER BY a.id DESC
+        """)
+        rows = await cursor.fetchall()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "Proposal", "Sheet", "Cell", "Old Value", "New Value", "Date"])
+    for r in rows:
+        writer.writerow([r["id"], r["proposal_id"], r["sheet"], r["cell_ref"],
+                         r["old_value"], r["new_value"], r["executed_at"]])
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=transactions.csv"},
     )
 
 

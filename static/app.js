@@ -269,7 +269,7 @@ chatForm.addEventListener("submit", async function(e) {
     var data = await res.json();
     addMessage("assistant", data.assistant_message, data.proposal_id);
 
-    // Add CSV download button for reports
+    // Add CSV/XLSX download buttons for reports
     if (data.assistant_message && !data.proposal_id) {
       var lower = data.assistant_message.toLowerCase();
       var reportType = null;
@@ -280,7 +280,10 @@ chatForm.addEventListener("submit", async function(e) {
         var wrapper = document.createElement("div");
         wrapper.className = "fade-up flex gap-3";
         wrapper.innerHTML = '<div class="w-7 h-7 shrink-0"></div>' +
-          '<button onclick="downloadReportCSV(\'' + reportType + '\')" class="btn-ghost text-xs px-3 py-1.5 rounded-lg">&#128229; Download CSV</button>';
+          '<div class="flex gap-2">' +
+            '<a href="/api/reports/' + reportType + '/csv" class="btn-ghost text-xs px-3 py-1.5 rounded-lg" download>&#128229; CSV</a>' +
+            '<a href="/api/reports/' + reportType + '/xlsx" class="btn-ghost text-xs px-3 py-1.5 rounded-lg" download>&#128229; XLSX</a>' +
+          '</div>';
         chatMessages.appendChild(wrapper);
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
@@ -755,6 +758,19 @@ setInterval(checkHealth, 60000);
     document.body.style.userSelect = "";
   });
 })();
+
+// ── Export Dropdown ──────────────────────────────────────────
+function toggleExportMenu() {
+  var menu = document.getElementById("exportMenu");
+  menu.classList.toggle("hidden");
+}
+document.addEventListener("click", function(e) {
+  var dropdown = document.getElementById("exportDropdown");
+  var menu = document.getElementById("exportMenu");
+  if (dropdown && !dropdown.contains(e.target)) {
+    menu.classList.add("hidden");
+  }
+});
 
 // ── Feature 5: Date Shortcuts ──────────────────────────────
 var selectedDate = null;

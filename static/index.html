@@ -52,9 +52,22 @@
       </div>
       <div class="flex items-center gap-4">
         <button onclick="showImportModal()" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5" title="Import CSV">&#128229; Import</button>
+        <div class="relative" id="exportDropdown">
+          <button onclick="toggleExportMenu()" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5">&#128229; Export</button>
+          <div id="exportMenu" class="hidden absolute right-0 top-full mt-1 bg-[#1a1a22] border border-[rgba(42,42,52,0.5)] rounded-lg shadow-lg py-1 z-50 min-w-[160px]">
+            <a href="/api/ledger/download" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Download Ledger (.xlsx)</a>
+            <a href="/api/transactions/csv" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Export Transactions (.csv)</a>
+            <div class="border-t border-[rgba(42,42,52,0.3)] my-1"></div>
+            <a href="/api/reports/trial-balance/csv" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Trial Balance (.csv)</a>
+            <a href="/api/reports/trial-balance/xlsx" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Trial Balance (.xlsx)</a>
+            <a href="/api/reports/income-statement/csv" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Income Statement (.csv)</a>
+            <a href="/api/reports/income-statement/xlsx" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Income Statement (.xlsx)</a>
+            <a href="/api/reports/balance-sheet/csv" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Balance Sheet (.csv)</a>
+            <a href="/api/reports/balance-sheet/xlsx" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Balance Sheet (.xlsx)</a>
+          </div>
+        </div>
         <button id="helpBtn" onclick="showExamples()" title="Show example prompts" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5">?</button>
         <span id="healthDot" title="System health" class="w-2.5 h-2.5 rounded-full bg-gray-600 health-pulse"></span>
-        <a href="/api/ledger/download" class="text-sm text-ledger-accent hover:text-white transition" style="text-underline-offset: 3px;">Download ledger.xlsx</a>
       </div>
     </header>
 
