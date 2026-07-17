@@ -239,6 +239,13 @@ chatForm.addEventListener("submit", async function(e) {
   var msg = chatInput.value.trim();
   if (!msg) return;
 
+  // Prepend selected date if set
+  if (selectedDate) {
+    msg = "Date: " + selectedDate + ". " + msg;
+    selectedDate = null;
+    document.querySelectorAll(".date-shortcut").forEach(function(el) { el.classList.remove("active"); });
+  }
+
   chatInput.value = "";
   addMessage("user", msg);
   showLoading();
@@ -259,6 +266,23 @@ chatForm.addEventListener("submit", async function(e) {
     }
     var data = await res.json();
     addMessage("assistant", data.assistant_message, data.proposal_id);
+
+    // Add CSV download button for reports
+    if (data.assistant_message && !data.proposal_id) {
+      var lower = data.assistant_message.toLowerCase();
+      var reportType = null;
+      if (lower.includes("trial balance")) reportType = "trial-balance";
+      else if (lower.includes("income statement") || lower.includes("profit")) reportType = "income-statement";
+      else if (lower.includes("balance sheet")) reportType = "balance-sheet";
+      if (reportType) {
+        var wrapper = document.createElement("div");
+        wrapper.className = "fade-up flex gap-3";
+        wrapper.innerHTML = '<div class="w-7 h-7 shrink-0"></div>' +
+          '<button onclick="downloadReportCSV(\'' + reportType + '\')" class="btn-ghost text-xs px-3 py-1.5 rounded-lg">&#128229; Download CSV</button>';
+        chatMessages.appendChild(wrapper);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+    }
 
     if (data.proposal_id) {
       await loadProposal(data.proposal_id);
@@ -729,3 +753,168 @@ setInterval(checkHealth, 60000);
     document.body.style.userSelect = "";
   });
 })();
+
+// ── Feature 5: Date Shortcuts ──────────────────────────────
+var selectedDate = null;
+
+function formatDate(d) {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+function setDateShortcut(preset) {
+  var today = new Date();
+  var d;
+  if (preset === "today") {
+    d = today;
+  } else if (preset === "yesterday") {
+    d = new Date(today);
+    d.setDate(d.getDate() - 1);
+  } else if (preset === "this_week") {
+    d = new Date(today);
+    d.setDate(d.getDate() - d.getDay());
+  } else if (preset === "last_week") {
+    d = new Date(today);
+    d.setDate(d.getDate() - d.getDay() - 7);
+  }
+  selectedDate = formatDate(d);
+  // Highlight active button
+  document.querySelectorAll(".date-shortcut").forEach(function(el) { el.classList.remove("active"); });
+  event.target.classList.add("active");
+  showToast("Date set to " + selectedDate, "info");
+}
+
+function setCustomDate(input) {
+  selectedDate = input.value;
+  document.querySelectorAll(".date-shortcut").forEach(function(el) { el.classList.remove("active"); });
+  input.classList.add("active");
+  showToast("Date set to " + selectedDate, "info");
+}
+
+// ── Feature 3: Quick Action Buttons ────────────────────────
+var actionTemplates = [
+  { label: "Record Expense", icon: "&#128176;", template: "Record a $ expense for " },
+  { label: "Record Revenue", icon: "&#128178;", template: "Record $ revenue from " },
+  { label: "Payment Received", icon: "&#128179;", template: "Record payment of $ received from " },
+  { label: "Payment Made", icon: "&#128179;", template: "Record payment of $ made to " },
+  { label: "Balance Sheet", icon: "&#128202;", template: "Show me the current balance sheet" },
+  { label: "Income Statement", icon: "&#128200;", template: "Show me the income statement" },
+  { label: "Trial Balance", icon: "&#9878;", template: "Show me the trial balance" },
+];
+
+function renderActionButtons() {
+  var wrap = document.getElementById("examplePromptsWrap");
+  if (!wrap) return;
+  var html = '<div class="action-grid">';
+  actionTemplates.forEach(function(a) {
+    html += '<button class="action-pill" onclick="handleAction(\'' + escHtml(a.template) + '\')">' +
+      '<span class="icon">' + a.icon + '</span>' + a.label + '</button>';
+  });
+  html += '</div>';
+  wrap.innerHTML = html;
+  wrap.style.display = "";
+}
+
+function handleAction(template) {
+  if (template.includes("$")) {
+    // Expense/revenue actions: focus input with template
+    chatInput.value = template;
+    chatInput.focus();
+  } else {
+    // Report actions: send immediately
+    chatInput.value = template;
+    chatForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  }
+}
+
+// ── Feature 4: Transaction History Tab ─────────────────────
+var txTabLoaded = false;
+
+async function loadTransactions() {
+  var view = document.getElementById("transactionView");
+  if (!view) return;
+  view.innerHTML = '<div class="flex items-center gap-2 text-xs text-gray-600 py-4">' +
+    '<span class="typing-dot inline-block w-1.5 h-1.5 bg-gray-500 rounded-full"></span>' +
+    '<span class="ml-1">Loading transactions...</span></div>';
+  try {
+    var res = await fetch("/api/transactions?limit=50");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var data = await res.json();
+    var txs = data.transactions || [];
+    if (txs.length === 0) {
+      view.innerHTML = '<div class="text-center py-12 text-gray-600">' +
+        '<div class="empty-state-icon mb-3">&#128203;</div>' +
+        '<p class="font-medium">No transactions yet</p>' +
+        '<p class="text-xs mt-1 text-gray-700">Execute a proposal to see transactions here</p></div>';
+      return;
+    }
+    var html = '<div class="tx-header"><span>Date</span><span>Description</span><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>';
+    txs.forEach(function(tx) {
+      var debit = tx.debit && tx.debit !== "0" ? tx.debit : "";
+      var credit = tx.credit && tx.credit !== "0" ? tx.credit : "";
+      html += '<div class="tx-row">' +
+        '<span class="tx-date">' + escHtml(tx.date || "") + '</span>' +
+        '<span class="tx-desc">' + escHtml(tx.description || tx.user_message || "") + '</span>' +
+        '<span class="tx-acct">' + escHtml(tx.account || "") + '</span>' +
+        '<span class="tx-debit">' + (debit ? "$" + escHtml(debit) : "") + '</span>' +
+        '<span class="tx-credit">' + (credit ? "$" + escHtml(credit) : "") + '</span>' +
+      '</div>';
+    });
+    view.innerHTML = html;
+  } catch (err) {
+    view.innerHTML = '<p class="text-sm" style="color: #ef4444;">Failed to load transactions.</p>';
+  }
+}
+
+// ── Feature 2: Export Reports as CSV ───────────────────────
+function downloadReportCSV(reportType) {
+  window.open("/api/reports/" + reportType + "/csv", "_blank");
+}
+
+// ── Feature 1: CSV Import ──────────────────────────────────
+function showImportModal() {
+  var existing = document.getElementById("importModal");
+  if (existing) existing.remove();
+  var modal = document.createElement("div");
+  modal.id = "importModal";
+  modal.className = "modal-overlay";
+  modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+  modal.innerHTML =
+    '<div class="modal-content">' +
+      '<h3 class="text-sm font-semibold text-white mb-3">Import Bank Transactions</h3>' +
+      '<p class="text-xs text-gray-500 mb-3">Paste CSV with columns: Date, Description, Amount</p>' +
+      '<textarea id="csvInput" rows="8" class="input-glow w-full rounded-lg px-3 py-2 text-xs font-mono mb-3" ' +
+        'style="background: rgba(18,18,24,0.5); border: 1px solid var(--glass-border); color: #d1d5db; resize: vertical;" ' +
+        'placeholder="Date,Description,Amount&#10;2025-06-11,Office Supplies,-1200.00&#10;2025-06-12,Client Payment,3500.00"></textarea>' +
+      '<div class="flex gap-2">' +
+        '<button onclick="submitCSVImport()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1">Import & Propose</button>' +
+        '<button onclick="document.getElementById(\'importModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(modal);
+}
+
+async function submitCSVImport() {
+  var csv = document.getElementById("csvInput").value.trim();
+  if (!csv) { showToast("Please paste CSV data", "error"); return; }
+  document.getElementById("importModal").remove();
+  chatInput.value = "Import these bank transactions:\n" + csv;
+  chatForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+}
+
+// ── Tab with Transactions ──────────────────────────────────
+var _origSwitchTab = switchTab;
+switchTab = function(tab) {
+  _origSwitchTab(tab);
+  if (tab === "transactions") {
+    document.getElementById("proposalView").classList.add("hidden");
+    document.getElementById("ledgerView").classList.add("hidden");
+    document.getElementById("transactionView").classList.remove("hidden");
+    document.getElementById("tabProposal").className = "px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition";
+    document.getElementById("tabLedger").className = "px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition";
+    document.getElementById("tabTransactions").className = "tab-active px-5 py-3 font-medium transition";
+    loadTransactions();
+  }
+};
+
+// Initialize action buttons on load
+renderActionButtons();

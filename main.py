@@ -552,6 +552,67 @@ async def download_ledger():
     )
 
 
+@app.get("/api/transactions", summary="List executed transactions from audit log")
+async def get_transactions(limit: int = 50, search: str = ""):
+    async with aiosqlite.connect(db.DB_PATH) as conn:
+        conn.row_factory = aiosqlite.Row
+        query = """
+            SELECT a.*, p.user_message, p.created_at as proposal_date
+            FROM audit_log a
+            LEFT JOIN proposals p ON a.proposal_id = p.id
+            WHERE a.action_index >= 0
+        """
+        params = []
+        if search:
+            query += " AND (a.new_value LIKE ? OR p.user_message LIKE ?)"
+            params.extend([f"%{search}%", f"%{search}%"])
+        query += " ORDER BY a.id DESC LIMIT ?"
+        params.append(min(limit, 200))
+        cursor = await conn.execute(query, params)
+        rows = await cursor.fetchall()
+    return {"transactions": [dict(r) for r in rows]}
+
+
+@app.get("/api/reports/{report_type}/csv", summary="Download report as CSV")
+async def download_report_csv(report_type: str):
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    if report_type == "trial_balance":
+        report = report_engine.trial_balance()
+        rows = report.get("rows", [])
+        headers = ["Account", "Name", "Debit", "Credit"]
+        data = [[r["account"], r["name"], r["debit"], r["credit"]] for r in rows]
+        data.append(["", "TOTAL", report["total_debit"], report["total_access"]])
+    elif report_type == "income_statement":
+        report = report_engine.income_statement()
+        rows = report.get("revenue", []) + report.get("expenses", [])
+        headers = ["Account", "Name", "Amount"]
+        data = [[r["account"], r["name"], r["amount"]] for r in rows]
+        data.append(["", "Net Income", report["net_income"]])
+    elif report_type == "balance_sheet":
+        report = report_engine.balance_sheet()
+        sections = report.get("assets", []) + report.get("liabilities", []) + report.get("equity", [])
+        headers = ["Account", "Name", "Amount"]
+        data = [[r["account"], r["name"], r["amount"]] for r in sections]
+        data.append(["", "Total Assets", report["total_assets"]])
+        data.append(["", "Total Liabilities + Equity", report["total_liabilities"] + report["total_equity"]])
+    else:
+        raise HTTPException(404, f"Unknown report type: {report_type}")
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(headers)
+    writer.writerows(data)
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={report_type}.csv"},
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
     html_path = Path("static/index.html")

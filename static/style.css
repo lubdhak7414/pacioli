@@ -284,6 +284,109 @@ kbd {
   height: 48px;
 }
 
+/* ── Date Shortcuts ───────────────────────────────────── */
+.date-shortcut {
+  font-size: 0.65rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(26,26,34,0.6);
+  border: 1px solid var(--glass-border);
+  color: #9ca3af;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.date-shortcut:hover {
+  background: rgba(42,42,52,0.6);
+  border-color: rgba(59,130,246,0.3);
+  color: #d1d5db;
+}
+.date-shortcut.active {
+  background: rgba(59,130,246,0.15);
+  border-color: rgba(59,130,246,0.4);
+  color: #60a5fa;
+}
+input[type="date"].date-shortcut {
+  color-scheme: dark;
+}
+
+/* ── Action Buttons ───────────────────────────────────── */
+.action-grid {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  scrollbar-width: none;
+}
+.action-grid::-webkit-scrollbar { display: none; }
+.action-pill {
+  white-space: nowrap;
+  font-size: 0.7rem;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: rgba(26,26,34,0.6);
+  border: 1px solid var(--glass-border);
+  color: #9ca3af;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+.action-pill:hover {
+  background: rgba(42,42,52,0.6);
+  border-color: rgba(59,130,246,0.3);
+  color: white;
+}
+.action-pill .icon { margin-right: 4px; }
+
+/* ── Transaction History ──────────────────────────────── */
+.tx-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 100px 80px 80px;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(42,42,52,0.3);
+  font-size: 0.75rem;
+  transition: background var(--transition-fast);
+  cursor: pointer;
+}
+.tx-row:hover { background: rgba(59,130,246,0.04); }
+.tx-row .tx-date { color: #6b7280; font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+.tx-row .tx-desc { color: #d1d5db; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-row .tx-acct { color: #9ca3af; font-family: "JetBrains Mono", monospace; }
+.tx-row .tx-debit { color: #4ade80; font-family: "JetBrains Mono", monospace; text-align: right; }
+.tx-row .tx-credit { color: #f87171; font-family: "JetBrains Mono", monospace; text-align: right; }
+.tx-header {
+  display: grid;
+  grid-template-columns: 90px 1fr 100px 80px 80px;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 0.65rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+/* ── Import Modal ─────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal-content {
+  background: var(--glass-bg-solid);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 560px;
+  box-shadow: var(--shadow-lg);
+}
+
 /* ── Mobile ───────────────────────────────────────────── */
 @media (max-width: 768px) {
   #leftPanel  { width: 100%; border-right: none; border-bottom: 1px solid var(--glass-border); max-height: 55vh; }

@@ -51,6 +51,7 @@
         </div>
       </div>
       <div class="flex items-center gap-4">
+        <button onclick="showImportModal()" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5" title="Import CSV">&#128229; Import</button>
         <button id="helpBtn" onclick="showExamples()" title="Show example prompts" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5">?</button>
         <span id="healthDot" title="System health" class="w-2.5 h-2.5 rounded-full bg-gray-600 health-pulse"></span>
         <a href="/api/ledger/download" class="text-sm text-ledger-accent hover:text-white transition" style="text-underline-offset: 3px;">Download ledger.xlsx</a>
@@ -121,6 +122,13 @@
               Send
             </button>
           </form>
+          <div class="flex gap-1.5 mt-2 flex-wrap">
+            <button onclick="setDateShortcut('today')" class="date-shortcut">Today</button>
+            <button onclick="setDateShortcut('yesterday')" class="date-shortcut">Yesterday</button>
+            <button onclick="setDateShortcut('this_week')" class="date-shortcut">This Week</button>
+            <button onclick="setDateShortcut('last_week')" class="date-shortcut">Last Week</button>
+            <input type="date" id="customDate" onchange="setCustomDate(this)" class="date-shortcut" style="cursor: pointer;" />
+          </div>
           <p class="text-xs mt-2 flex items-center justify-between text-gray-500">
             <span>
               <kbd>Ctrl+Y</kbd> approve &nbsp;
@@ -148,6 +156,10 @@
             class="px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition">
             Ledger
           </button>
+          <button id="tabTransactions" onclick="switchTab('transactions')"
+            class="px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition">
+            Transactions
+          </button>
         </div>
 
         <div class="flex-1 overflow-y-auto chat-scroll p-6">
@@ -164,6 +176,8 @@
           </div>
           <!-- Ledger view -->
           <div id="ledgerView" class="hidden"></div>
+          <!-- Transaction history view -->
+          <div id="transactionView" class="hidden"></div>
         </div>
 
         <!-- Past proposals toggle -->
