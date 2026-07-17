@@ -86,22 +86,9 @@
           </div>
         </div>
 
-        <!-- Example prompts (between chat and input) -->
-        <div id="examplePromptsWrap" class="px-4 pb-2 shrink-0">
-          <div id="examplePrompts" class="flex flex-col gap-1.5">
-            <button onclick="sendExample('Record a $1,000 cash payment for office supplies')"
-              class="btn-ghost text-left text-xs px-3 py-2 rounded-lg">
-              Record a $1,000 cash payment for office supplies
-            </button>
-            <button onclick="sendExample('Record $3,500 revenue received from a client')"
-              class="btn-ghost text-left text-xs px-3 py-2 rounded-lg">
-              Record $3,500 revenue received from a client
-            </button>
-            <button onclick="sendExample('Show me the current balance sheet')"
-              class="btn-ghost text-left text-xs px-3 py-2 rounded-lg">
-              Show me the current balance sheet
-            </button>
-          </div>
+        <!-- Quick actions (between chat and input) -->
+        <div id="examplePromptsWrap" class="px-4 pb-2 shrink-0 overflow-hidden">
+          <div id="examplePrompts" class="action-grid"></div>
         </div>
 
         <!-- Input area -->

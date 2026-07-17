@@ -125,10 +125,12 @@ function statusBadge(status) {
 }
 
 // Add message to chat
-function addMessage(role, text, proposalId) {
-  // Hide example prompts once the conversation starts
-  var examples = document.getElementById("examplePromptsWrap");
-  if (examples) examples.style.display = "none";
+function addMessage(role, text, proposalId, skipHidePrompts) {
+  // Hide example prompts once the conversation starts (but not on history load)
+  if (!skipHidePrompts && role === "user") {
+    var examples = document.getElementById("examplePromptsWrap");
+    if (examples) examples.style.display = "none";
+  }
 
   var isUser = role === "user";
   var wrapper = document.createElement("div");
@@ -711,7 +713,7 @@ setInterval(checkHealth, 60000);
     if (data.messages && data.messages.length > 0) {
       chatMessages.innerHTML = "";
       data.messages.forEach(function(m) {
-        addMessage(m.role, m.content, m.proposal_id);
+        addMessage(m.role, m.content, m.proposal_id, true);
       });
     }
   } catch (err) {
@@ -802,16 +804,16 @@ var actionTemplates = [
 ];
 
 function renderActionButtons() {
-  var wrap = document.getElementById("examplePromptsWrap");
+  var wrap = document.getElementById("examplePrompts");
   if (!wrap) return;
-  var html = '<div class="action-grid">';
+  var html = "";
   actionTemplates.forEach(function(a) {
     html += '<button class="action-pill" onclick="handleAction(\'' + escHtml(a.template) + '\')">' +
       '<span class="icon">' + a.icon + '</span>' + a.label + '</button>';
   });
-  html += '</div>';
   wrap.innerHTML = html;
-  wrap.style.display = "";
+  var parent = document.getElementById("examplePromptsWrap");
+  if (parent) parent.style.display = "";
 }
 
 function handleAction(template) {
