@@ -44,3 +44,6 @@ Thumbs.db
 
 # ── Local-only notes (never published) ────────────────────
 Details.md
+*.md
+!README.md
+!CONTRIBUTING.md
