@@ -12,6 +12,75 @@ const charCount       = document.getElementById("charCount");
 var currentProposalId = null;
 var historyOpen = false;
 var _confirmTimeout = null;
+var _pendingHighlight = null;
+
+// ── Auth ─────────────────────────────────────────────────────────
+function getApiKey() {
+  return localStorage.getItem("pacioli_api_key") || "";
+}
+
+function setApiKey(key) {
+  localStorage.setItem("pacioli_api_key", key);
+}
+
+function authHeaders() {
+  var key = getApiKey();
+  return key ? { "X-API-Key": key } : {};
+}
+
+// Wrapper around fetch that adds auth headers
+async function apiFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {}, authHeaders());
+  var res = await fetch(url, opts);
+  if (res.status === 401) {
+    showAuthModal();
+    throw new Error("Authentication required");
+  }
+  return res;
+}
+
+function showAuthModal() {
+  var existing = document.getElementById("authModal");
+  if (existing) return;
+  var modal = document.createElement("div");
+  modal.id = "authModal";
+  modal.className = "modal-overlay";
+  modal.innerHTML =
+    '<div class="modal-content">' +
+      '<h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Enter API Key</h3>' +
+      '<p class="text-xs mb-3" style="color: var(--text-muted);">This instance requires authentication. Enter the API key to continue.</p>' +
+      '<input id="authKeyInput" type="password" class="input-glow w-full rounded-lg px-3 py-2 text-sm mb-3" ' +
+        'style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);" ' +
+        'placeholder="API key" autofocus />' +
+      '<div class="flex gap-2">' +
+        '<button onclick="submitAuthKey()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1">Connect</button>' +
+        '<button onclick="document.getElementById(\'authModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(modal);
+  document.getElementById("authKeyInput").focus();
+}
+
+function submitAuthKey() {
+  var input = document.getElementById("authKeyInput");
+  var key = input ? input.value.trim() : "";
+  if (!key) return;
+  setApiKey(key);
+  document.getElementById("authModal").remove();
+  showToast("Connected", "success");
+  checkHealth();
+}
+
+// Check if auth is needed on load
+(async function() {
+  try {
+    var res = await fetch("/api/health");
+    if (res.status === 401 && !getApiKey()) {
+      showAuthModal();
+    }
+  } catch (e) {}
+})();
 
 // ── Markdown renderer (lightweight) ────────────────────────
 function renderMarkdown(text) {
@@ -96,19 +165,29 @@ function escHtml(s) {
 }
 
 // Toast notifications
-function showToast(message, type) {
+function showToast(message, type, onUndo) {
   var styles = {
-    success: "background: #22c55e; box-shadow: 0 4px 12px rgba(34,197,94,0.3);",
-    error: "background: #ef4444; box-shadow: 0 4px 12px rgba(239,68,68,0.3);",
-    info: "background: #3b82f6; box-shadow: 0 4px 12px rgba(59,130,246,0.3);",
+    success: "background: #16a34a; box-shadow: 0 4px 12px rgba(22,163,74,0.25);",
+    error: "background: #e11d48; box-shadow: 0 4px 12px rgba(225,29,72,0.2);",
+    info: "background: #0d9488; box-shadow: 0 4px 12px rgba(13,148,136,0.25);",
   };
   var icons  = { success: "&#10003;", error: "&#10005;", info: "&#9432;" };
   var el = document.createElement("div");
   el.className = "toast fixed bottom-6 right-6 text-white px-4 py-3 rounded-xl text-sm z-50 flex items-center gap-2 font-medium";
   el.style.cssText = styles[type] || styles.info;
-  el.innerHTML = "<span>" + (icons[type] || icons.info) + "</span><span>" + escHtml(message) + "</span>";
+  var undoHtml = onUndo
+    ? '<button class="underline ml-2 text-xs opacity-80 hover:opacity-100 toast-undo">Undo</button>'
+    : "";
+  el.innerHTML = "<span>" + (icons[type] || icons.info) + "</span><span>" + escHtml(message) + "</span>" + undoHtml;
   document.body.appendChild(el);
-  setTimeout(function() { el.remove(); }, 3000);
+  var timerId = setTimeout(function() { el.remove(); }, onUndo ? 8000 : 3000);
+  if (onUndo) {
+    el.querySelector(".toast-undo").addEventListener("click", function() {
+      clearTimeout(timerId);
+      el.remove();
+      onUndo();
+    });
+  }
 }
 
 // Status badge
@@ -149,7 +228,7 @@ function addMessage(role, text, proposalId, skipHidePrompts) {
       : "";
     var rendered = renderMarkdown(text);
     contentHtml =
-      '<div class="w-7 h-7 rounded-full flex items-center justify-center text-xs shrink-0 mt-0.5" style="background: rgba(59,130,246,0.15); color: #60a5fa;">AI</div>' +
+      '<div class="w-7 h-7 rounded-full flex items-center justify-center text-xs shrink-0 mt-0.5" style="background: var(--primary-light); color: var(--primary);">AI</div>' +
       '<div class="' + bubbleClass + ' px-4 py-3 max-w-[85%] text-sm">' +
         '<div class="flex items-start justify-between gap-2">' +
           '<div class="flex-1 md-content">' + icon + rendered + badge + '</div>' +
@@ -259,7 +338,7 @@ chatForm.addEventListener("submit", async function(e) {
   showTyping();
 
   try {
-    var res = await fetch("/api/chat", {
+    var res = await apiFetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: msg }),
@@ -268,7 +347,9 @@ chatForm.addEventListener("submit", async function(e) {
     hideTyping();
     hideLoading();
     if (!res.ok) {
-      addMessage("assistant", "Server error (" + res.status + "). Please try again.");
+      var errData = await res.json().catch(function() { return {}; });
+      var errMsg = errData.detail || "Server error (" + res.status + "). Please try again.";
+      addMessage("assistant", errMsg);
       return;
     }
     var data = await res.json();
@@ -311,7 +392,7 @@ async function loadProposal(id) {
   clearTimeout(_confirmTimeout);
 
   try {
-    var res = await fetch("/api/proposals/" + id);
+    var res = await apiFetch("/api/proposals/" + id);
     if (!res.ok) throw new Error("HTTP " + res.status);
     var p = await res.json();
 
@@ -404,6 +485,10 @@ async function loadProposal(id) {
 
     if (isPending) {
       showToast("Proposal #" + id + " ready for review — Ctrl+Y to approve", "info");
+      // Highlight changed cells in ledger preview if it's visible
+      if (p.highlight_cells && Object.keys(p.highlight_cells).length > 0) {
+        _pendingHighlight = p.highlight_cells;
+      }
     }
   } catch (err) {
     proposalContent.innerHTML = '<p class="text-sm text-ledger-danger">Failed to load proposal #' + id + '</p>';
@@ -444,7 +529,7 @@ async function approveProposal(id) {
   var btns = document.getElementById("approvalButtons");
   btns.innerHTML = '<p class="text-sm text-gray-500 animate-pulse">Executing...</p>';
   try {
-    var res = await fetch("/api/proposals/" + id + "/approve", { method: "POST" });
+    var res = await apiFetch("/api/proposals/" + id + "/approve", { method: "POST" });
     if (!res.ok) {
       var errBody = await res.json().catch(function() { return {}; });
       btns.innerHTML = '<p class="text-sm text-ledger-danger">Execution failed</p>';
@@ -462,7 +547,7 @@ async function approveProposal(id) {
           (data.change_log ? data.change_log.map(function(c) { return '<p>' + escHtml(c) + '</p>'; }).join("") : "Done.") +
         '</div>';
       addMessage("assistant", "Proposal #" + id + " approved — " + (data.change_log ? data.change_log.length : 0) + " cell(s) updated.", id);
-      showToast("Proposal approved and executed", "success");
+      showToast("Proposal approved and executed", "success", function() { restoreProposal(id); });
       currentProposalId = null;
       if (!historyOpen) toggleHistory();
       else loadHistory();
@@ -486,7 +571,7 @@ async function rejectProposal(id) {
   var btns = document.getElementById("approvalButtons");
   btns.innerHTML = '<p class="text-sm text-gray-500 animate-pulse">Rejecting...</p>';
   try {
-    var res = await fetch("/api/proposals/" + id + "/reject", { method: "POST" });
+    var res = await apiFetch("/api/proposals/" + id + "/reject", { method: "POST" });
     if (!res.ok) {
       var errBody = await res.json().catch(function() { return {}; });
       btns.innerHTML = '<p class="text-sm text-ledger-danger">Reject failed</p>';
@@ -515,9 +600,9 @@ async function rejectProposal(id) {
 // Past proposals history panel
 async function loadHistory() {
   var panel = document.getElementById("historyPanel");
-  panel.innerHTML = '<p class="text-xs text-gray-600 animate-pulse">Loading...</p>';
+  panel.innerHTML = '<p class="text-xs animate-pulse" style="color: var(--text-muted);">Loading...</p>';
   try {
-    var res = await fetch("/api/proposals?limit=10");
+    var res = await apiFetch("/api/proposals?limit=10");
     var data = await res.json();
     var proposals = data.proposals || [];
     if (proposals.length === 0) {
@@ -561,8 +646,8 @@ function switchTab(tab) {
   var lv = document.getElementById("ledgerView");
   var tp = document.getElementById("tabProposal");
   var tl = document.getElementById("tabLedger");
-  var active = "border-ledger-accent text-white";
-  var idle = "border-transparent text-gray-500 hover:text-gray-300";
+  var active = "border-ledger-accent";
+  var idle = "border-transparent";
   if (tab === "ledger") {
     pv.classList.add("hidden");
     lv.classList.remove("hidden");
@@ -572,8 +657,8 @@ function switchTab(tab) {
   } else {
     lv.classList.add("hidden");
     pv.classList.remove("hidden");
-    tp.className = "px-5 py-3 font-medium border-b-2 transition " + active;
-    tl.className = "px-5 py-3 font-medium border-b-2 transition " + idle;
+    tp.className = "tab-active px-5 py-3 font-medium border-b-2 transition";
+    tl.className = "px-5 py-3 font-medium border-b-2 border-transparent transition";
   }
 }
 
@@ -590,7 +675,7 @@ async function loadLedgerPreview(sheet) {
       '<span class="ml-1">Loading ledger...</span>' +
     '</div>';
   try {
-    var res = await fetch("/api/ledger/preview?sheet=" + encodeURIComponent(ledgerSheet) + "&limit=100");
+    var res = await apiFetch("/api/ledger/preview?sheet=" + encodeURIComponent(ledgerSheet) + "&limit=100");
     if (!res.ok) throw new Error("HTTP " + res.status);
     var data = await res.json();
 
@@ -614,12 +699,12 @@ async function loadLedgerPreview(sheet) {
     }
 
     var thead = '<tr>' + data.headers.map(function(h) {
-      return '<th class="text-left px-2 py-1 border-b border-ledger-border text-gray-400 font-medium sticky top-0 bg-ledger-surface">' + escHtml(h) + '</th>';
+      return '<th class="text-left px-2 py-1 border-b border-ledger-border font-medium sticky top-0 bg-ledger-surface" style="color: var(--text-muted);">' + escHtml(h) + '</th>';
     }).join("") + '</tr>';
 
     var tbody = data.rows.map(function(row) {
       return '<tr class="hover:bg-ledger-surface/50">' + row.map(function(cell) {
-        return '<td class="px-2 py-1 border-b border-ledger-border/40 font-mono text-gray-300">' + escHtml(cell == null ? "" : cell) + '</td>';
+        return '<td class="px-2 py-1 border-b border-ledger-border/40 font-mono" style="color: var(--text-secondary);">' + escHtml(cell == null ? "" : cell) + '</td>';
       }).join("") + '</tr>';
     }).join("");
 
@@ -628,6 +713,34 @@ async function loadLedgerPreview(sheet) {
       '<div class="overflow-x-auto"><table class="w-full text-xs border-collapse min-w-[600px]">' +
         '<thead>' + thead + '</thead><tbody>' + tbody + '</tbody></table></div>' +
       '<p class="text-xs text-gray-600 mt-3">Showing up to 100 rows. Download for the full file.</p>';
+
+    // Apply diff highlights if a proposal is pending
+    if (_pendingHighlight && _pendingHighlight[data.sheet]) {
+      var cells = _pendingHighlight[data.sheet];
+      var table = view.querySelector("table");
+      if (table) {
+        var rows = table.querySelectorAll("tbody tr");
+        cells.forEach(function(cellRef) {
+          var match = cellRef.match(/^([A-Z]+)(\d+)$/);
+          if (!match) return;
+          var colLetter = match[1];
+          var rowNum = parseInt(match[2]);
+          // Convert column letter to 0-based index
+          var colIdx = 0;
+          for (var i = 0; i < colLetter.length; i++) {
+            colIdx = colIdx * 26 + (colLetter.charCodeAt(i) - 64);
+          }
+          colIdx -= 1; // 0-based
+          var rowIdx = rowNum - 2; // -2: header is row 1, data starts at row 2, array is 0-based
+          if (rowIdx >= 0 && rowIdx < rows.length) {
+            var tds = rows[rowIdx].querySelectorAll("td");
+            if (colIdx >= 0 && colIdx < tds.length) {
+              tds[colIdx].classList.add("diff-highlight");
+            }
+          }
+        });
+      }
+    }
   } catch (err) {
     view.innerHTML = '<p class="text-sm text-ledger-danger">Failed to load ledger preview.</p>';
   }
@@ -637,7 +750,7 @@ async function loadLedgerPreview(sheet) {
 async function restoreProposal(id) {
   if (!confirm("Restore the ledger to its state before proposal #" + id + "? This overwrites the current ledger.")) return;
   try {
-    var res = await fetch("/api/proposals/" + id + "/restore", { method: "POST" });
+    var res = await apiFetch("/api/proposals/" + id + "/restore", { method: "POST" });
     var data = await res.json();
     if (res.ok && data.success) {
       showToast("Ledger restored (before #" + id + ")", "success");
@@ -717,7 +830,7 @@ setInterval(checkHealth, 60000);
 // Load chat history on page load
 (async function() {
   try {
-    var res = await fetch("/api/chat/history");
+    var res = await apiFetch("/api/chat/history");
     var data = await res.json();
     if (data.messages && data.messages.length > 0) {
       chatMessages.innerHTML = "";
@@ -769,6 +882,14 @@ setInterval(checkHealth, 60000);
 function toggleExportMenu() {
   var menu = document.getElementById("exportMenu");
   menu.classList.toggle("hidden");
+  // Inject auth key into download links
+  var key = getApiKey();
+  menu.querySelectorAll("a[href]").forEach(function(a) {
+    var url = new URL(a.getAttribute("href"), window.location.origin);
+    if (key) url.searchParams.set("key", key);
+    else url.searchParams.delete("key");
+    a.href = url.pathname + url.search;
+  });
 }
 document.addEventListener("click", function(e) {
   var dropdown = document.getElementById("exportDropdown");
@@ -860,7 +981,7 @@ async function loadTransactions() {
     '<span class="typing-dot inline-block w-1.5 h-1.5 bg-gray-500 rounded-full"></span>' +
     '<span class="ml-1">Loading transactions...</span></div>';
   try {
-    var res = await fetch("/api/transactions?limit=50");
+    var res = await apiFetch("/api/transactions?limit=50");
     if (!res.ok) throw new Error("HTTP " + res.status);
     var data = await res.json();
     var txs = data.transactions || [];
@@ -868,7 +989,9 @@ async function loadTransactions() {
       view.innerHTML = '<div class="text-center py-12 text-gray-600">' +
         '<div class="empty-state-icon mb-3">&#128203;</div>' +
         '<p class="font-medium">No transactions yet</p>' +
-        '<p class="text-xs mt-1 text-gray-700">Execute a proposal to see transactions here</p></div>';
+        '<p class="text-xs mt-1 text-gray-700 mb-4">Transactions are created when you approve a proposal</p>' +
+        '<button onclick="handleAction(\'Record a $ expense for \')" class="btn-ghost text-xs px-4 py-2 rounded-lg">Record your first transaction</button>' +
+        '</div>';
       return;
     }
     var html = '<div class="tx-header"><span>Date</span><span>Description</span><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>';
@@ -907,7 +1030,7 @@ function showImportModal() {
       '<h3 class="text-sm font-semibold text-white mb-3">Import Bank Transactions</h3>' +
       '<p class="text-xs text-gray-500 mb-3">Paste CSV with columns: Date, Description, Amount</p>' +
       '<textarea id="csvInput" rows="8" class="input-glow w-full rounded-lg px-3 py-2 text-xs font-mono mb-3" ' +
-        'style="background: rgba(18,18,24,0.5); border: 1px solid var(--glass-border); color: #d1d5db; resize: vertical;" ' +
+        'style="background: var(--surface); border: 1px solid var(--border); color: var(--text-secondary); resize: vertical;" ' +
         'placeholder="Date,Description,Amount&#10;2025-06-11,Office Supplies,-1200.00&#10;2025-06-12,Client Payment,3500.00"></textarea>' +
       '<div class="flex gap-2">' +
         '<button onclick="submitCSVImport()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1">Import & Propose</button>' +
@@ -925,21 +1048,97 @@ async function submitCSVImport() {
   chatForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 }
 
-// ── Tab with Transactions ──────────────────────────────────
+// ── Audit Trail Tab ─────────────────────────────────────────
+async function loadAuditTrail() {
+  var view = document.getElementById("auditView");
+  if (!view) return;
+  view.innerHTML = '<div class="flex items-center gap-2 text-xs text-gray-600 py-4">' +
+    '<span class="typing-dot inline-block w-1.5 h-1.5 bg-gray-500 rounded-full"></span>' +
+    '<span class="ml-1">Loading audit trail...</span></div>';
+  try {
+    var res = await apiFetch("/api/audit?limit=50");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var data = await res.json();
+    var entries = data.entries || [];
+    if (entries.length === 0) {
+      view.innerHTML = '<div class="text-center py-12 text-gray-600">' +
+        '<div class="empty-state-icon mb-3">&#128203;</div>' +
+        '<p class="font-medium">No audit entries yet</p>' +
+        '<p class="text-xs mt-1 text-gray-700">Approved proposals will appear here</p></div>';
+      return;
+    }
+    var html = '<div class="space-y-2">';
+    entries.forEach(function(e) {
+      var isRestore = e.action_index === -1;
+      var cellDisplay = isRestore
+        ? '<span class="text-ledger-warn font-medium">Undo</span>'
+        : '<span class="font-mono text-gray-400">' + escHtml(e.cell_ref || "—") + '</span>';
+      var valueDisplay = "";
+      if (isRestore) {
+        valueDisplay = '<span class="text-xs text-gray-500">Restored ledger to previous state</span>';
+      } else if (e.old_value && e.new_value) {
+        valueDisplay =
+          '<span class="text-ledger-danger line-through text-xs">' + escHtml(e.old_value) + '</span>' +
+          '<span class="text-gray-600 text-xs"> &rarr; </span>' +
+          '<span class="text-ledger-success text-xs">' + escHtml(e.new_value) + '</span>';
+      } else if (e.new_value) {
+        valueDisplay = '<span class="text-ledger-success text-xs">' + escHtml(e.new_value) + '</span>';
+      }
+      var time = e.executed_at ? e.executed_at.replace("T", " ").slice(0, 19) : "";
+      html +=
+        '<div class="audit-row p-3 rounded-lg cursor-pointer" onclick="loadProposal(' + e.proposal_id + ')">' +
+          '<div class="flex items-center gap-2 mb-1">' +
+            '<span class="text-xs text-gray-600 font-mono">' + escHtml(time) + '</span>' +
+            '<span class="text-xs font-mono px-1.5 py-0.5 rounded bg-ledger-accent/10 text-ledger-accent">#' + e.proposal_id + '</span>' +
+            '<span class="text-xs text-gray-500">' + escHtml(e.sheet) + '</span>' +
+            cellDisplay +
+          '</div>' +
+          '<div>' + valueDisplay + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    view.innerHTML = html;
+  } catch (err) {
+    view.innerHTML = '<p class="text-sm text-ledger-danger">Failed to load audit trail.</p>';
+  }
+}
+
+// ── Extended Tabs ───────────────────────────────────────────
 var _origSwitchTab = switchTab;
+var _allTabIds = ["tabProposal", "tabLedger", "tabTransactions", "tabAudit"];
+var _idleClass = "px-5 py-3 font-medium border-b-2 border-transparent transition";
+var _activeClass = "tab-active px-5 py-3 font-medium transition";
+
+function _resetAllTabs() {
+  _allTabIds.forEach(function(id) {
+    document.getElementById(id).className = _idleClass;
+  });
+  document.getElementById("proposalView").classList.add("hidden");
+  document.getElementById("ledgerView").classList.add("hidden");
+  document.getElementById("transactionView").classList.add("hidden");
+  document.getElementById("auditView").classList.add("hidden");
+}
+
 switchTab = function(tab) {
-  _origSwitchTab(tab);
-  if (tab === "transactions") {
-    document.getElementById("proposalView").classList.add("hidden");
-    document.getElementById("ledgerView").classList.add("hidden");
-    document.getElementById("transactionView").classList.remove("hidden");
-    document.getElementById("tabProposal").className = "px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition";
-    document.getElementById("tabLedger").className = "px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition";
-    document.getElementById("tabTransactions").className = "tab-active px-5 py-3 font-medium transition";
-    loadTransactions();
+  if (tab === "transactions" || tab === "audit") {
+    // Handle extended tabs directly
+    _resetAllTabs();
+    if (tab === "transactions") {
+      document.getElementById("transactionView").classList.remove("hidden");
+      document.getElementById("tabTransactions").className = _activeClass;
+      loadTransactions();
+    } else if (tab === "audit") {
+      document.getElementById("auditView").classList.remove("hidden");
+      document.getElementById("tabAudit").className = _activeClass;
+      loadAuditTrail();
+    }
   } else {
+    // proposal / ledger — delegate to original
+    _origSwitchTab(tab);
     document.getElementById("transactionView").classList.add("hidden");
-    document.getElementById("tabTransactions").className = "px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition";
+    document.getElementById("auditView").classList.add("hidden");
+    document.getElementById("tabTransactions").className = _idleClass;
+    document.getElementById("tabAudit").className = _idleClass;
   }
 };
 
