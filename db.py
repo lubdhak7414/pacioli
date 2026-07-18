@@ -145,6 +145,17 @@ CREATE TABLE IF NOT EXISTS csv_profiles (
     amount_positive TEXT DEFAULT 'positive',
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    recurring_id    INTEGER REFERENCES recurring_transactions(id),
+    title           TEXT NOT NULL,
+    amount          REAL,
+    due_date        TEXT NOT NULL,
+    is_completed    INTEGER DEFAULT 0,
+    notify_days     INTEGER DEFAULT 3,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -172,6 +183,15 @@ async def init_db():
             await db.execute("ALTER TABLE transactions ADD COLUMN transfer_pair_id INTEGER")
         except Exception:
             pass  # Column already exists
+        # Migration: add currency columns
+        try:
+            await db.execute("ALTER TABLE transactions ADD COLUMN currency TEXT DEFAULT 'USD'")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE transactions ADD COLUMN exchange_rate REAL DEFAULT 1.0")
+        except Exception:
+            pass
     await seed_personal_tables()
 
 
@@ -920,3 +940,94 @@ async def create_csv_profile(name: str, delimiter: str, date_col: int, desc_col:
 async def delete_csv_profile(profile_id: int):
     async with _conn() as db:
         await db.execute("DELETE FROM csv_profiles WHERE id = ?", (profile_id,))
+
+
+# ── Reminders ────────────────────────────────────────────────
+
+async def get_reminders(include_completed: bool = False) -> list[dict]:
+    async with _conn() as db:
+        query = """SELECT r.*, rt.description as recurring_desc, rt.frequency
+                   FROM reminders r
+                   LEFT JOIN recurring_transactions rt ON r.recurring_id = rt.id"""
+        if not include_completed:
+            query += " WHERE r.is_completed = 0"
+        query += " ORDER BY r.due_date ASC"
+        cursor = await db.execute(query)
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def get_due_reminders(within_days: int = 3) -> list[dict]:
+    """Return reminders due within the next N days."""
+    from datetime import timedelta
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    future = (datetime.utcnow() + timedelta(days=within_days)).strftime("%Y-%m-%d")
+    async with _conn() as db:
+        cursor = await db.execute(
+            """SELECT * FROM reminders
+               WHERE is_completed = 0 AND due_date <= ? AND due_date >= ?""",
+            (future, today),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def create_reminder(title: str, due_date: str, amount: float = None,
+                           recurring_id: int = None, notify_days: int = 3) -> int:
+    async with _conn() as db:
+        cursor = await db.execute(
+            """INSERT INTO reminders (recurring_id, title, amount, due_date, notify_days)
+               VALUES (?, ?, ?, ?, ?)""",
+            (recurring_id, title, amount, due_date, notify_days),
+        )
+        return cursor.lastrowid
+
+
+async def complete_reminder(reminder_id: int):
+    async with _conn() as db:
+        await db.execute(
+            "UPDATE reminders SET is_completed = 1 WHERE id = ?", (reminder_id,)
+        )
+
+
+async def delete_reminder(reminder_id: int):
+    async with _conn() as db:
+        await db.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+
+
+# ── Transaction Search ──────────────────────────────────────
+
+async def search_transactions(query: str = "", from_date: str = None, to_date: str = None,
+                               min_amount: float = None, max_amount: float = None,
+                               account_id: int = None, category_id: int = None,
+                               limit: int = 50, offset: int = 0) -> list[dict]:
+    async with _conn() as db:
+        sql = """SELECT t.*, a.name as account_name, c.name as category_name, c.icon as category_icon
+                 FROM transactions t
+                 LEFT JOIN accounts a ON t.account_id = a.id
+                 LEFT JOIN categories c ON t.category_id = c.id
+                 WHERE 1=1"""
+        params: list = []
+        if query:
+            sql += " AND t.description LIKE ?"
+            params.append(f"%{query}%")
+        if from_date:
+            sql += " AND t.date >= ?"
+            params.append(from_date)
+        if to_date:
+            sql += " AND t.date <= ?"
+            params.append(to_date)
+        if min_amount is not None:
+            sql += " AND ABS(t.amount) >= ?"
+            params.append(min_amount)
+        if max_amount is not None:
+            sql += " AND ABS(t.amount) <= ?"
+            params.append(max_amount)
+        if account_id is not None:
+            sql += " AND t.account_id = ?"
+            params.append(account_id)
+        if category_id is not None:
+            sql += " AND t.category_id = ?"
+            params.append(category_id)
+        sql += " ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        cursor = await db.execute(sql, params)
+        return [dict(row) for row in await cursor.fetchall()]

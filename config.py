@@ -18,6 +18,8 @@ CHAT_RATE_LIMIT = os.getenv("CHAT_RATE_LIMIT", "10/minute")
 PROPOSAL_TIMEOUT_MINUTES = int(os.getenv("PROPOSAL_TIMEOUT_MINUTES", "15"))
 BACKUP_INTERVAL_HOURS = int(os.getenv("BACKUP_INTERVAL_HOURS", "24"))
 BACKUP_MAX_COUNT = int(os.getenv("BACKUP_MAX_COUNT", "30"))
+DEFAULT_CURRENCY = os.getenv("DEFAULT_CURRENCY", "USD")
+REMINDER_CHECK_HOURS = int(os.getenv("REMINDER_CHECK_HOURS", "12"))
 
 # Category → default tax tag for auto-tagging
 TAX_CATEGORY_DEFAULTS = {
