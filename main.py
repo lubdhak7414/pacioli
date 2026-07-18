@@ -840,6 +840,130 @@ async def download_transactions_csv(_auth: None = Depends(require_auth)):
     )
 
 
+# ── Personal Bookkeeping Endpoints ────────────────────────────
+
+@app.get("/api/accounts", summary="List all accounts")
+async def list_accounts(_auth: None = Depends(require_auth)):
+    accounts = await db.get_accounts()
+    # Add computed balance to each account
+    for acc in accounts:
+        acc["balance"] = await db.get_account_balance(acc["id"])
+    return {"accounts": accounts}
+
+
+@app.post("/api/accounts", summary="Create an account")
+async def create_account_endpoint(name: str, acc_type: str, currency: str = "USD",
+                                   _auth: None = Depends(require_auth)):
+    acc_id = await db.create_account(name, acc_type, currency)
+    return {"id": acc_id, "name": name, "type": acc_type}
+
+
+@app.put("/api/accounts/{account_id}", summary="Update an account")
+async def update_account_endpoint(account_id: int, name: str = None, acc_type: str = None,
+                                   _auth: None = Depends(require_auth)):
+    await db.update_account(account_id, name, acc_type)
+    return {"success": True}
+
+
+@app.delete("/api/accounts/{account_id}", summary="Deactivate an account")
+async def delete_account_endpoint(account_id: int, _auth: None = Depends(require_auth)):
+    await db.delete_account(account_id)
+    return {"success": True}
+
+
+@app.get("/api/categories", summary="List all categories")
+async def list_categories(_auth: None = Depends(require_auth)):
+    cats = await db.get_categories()
+    return {"categories": cats}
+
+
+@app.post("/api/categories", summary="Create a category")
+async def create_category_endpoint(name: str, parent_id: int = None, icon: str = "",
+                                    _auth: None = Depends(require_auth)):
+    cat_id = await db.create_category(name, parent_id, icon)
+    return {"id": cat_id, "name": name}
+
+
+@app.put("/api/categories/{category_id}", summary="Update a category")
+async def update_category_endpoint(category_id: int, name: str = None, icon: str = None,
+                                    _auth: None = Depends(require_auth)):
+    await db.update_category(category_id, name, icon)
+    return {"success": True}
+
+
+@app.get("/api/transactions/list", summary="List transactions with filters")
+async def list_transactions(limit: int = 50, offset: int = 0,
+                            account_id: int = None, category_id: int = None,
+                            _auth: None = Depends(require_auth)):
+    txs = await db.get_transactions(limit, offset, account_id, category_id)
+    return {"transactions": txs}
+
+
+@app.post("/api/transactions/{tx_id}/categorize", summary="Assign category to transaction")
+async def categorize_transaction(tx_id: int, category_id: int,
+                                  _auth: None = Depends(require_auth)):
+    await db.update_transaction_category(tx_id, category_id)
+    # Learn from this categorization
+    txs = await db.get_transactions(limit=1)
+    for tx in txs:
+        if tx["id"] == tx_id and tx.get("description"):
+            await db.learn_rule(tx["description"], category_id)
+            break
+    return {"success": True}
+
+
+@app.get("/api/rules", summary="List categorization rules")
+async def list_rules(_auth: None = Depends(require_auth)):
+    rules = await db.get_rules()
+    return {"rules": rules}
+
+
+@app.post("/api/rules", summary="Create a categorization rule")
+async def create_rule_endpoint(pattern: str, category_id: int, account_id: int = None,
+                                _auth: None = Depends(require_auth)):
+    rule_id = await db.create_rule(pattern, category_id, account_id)
+    return {"id": rule_id}
+
+
+@app.delete("/api/rules/{rule_id}", summary="Delete a rule")
+async def delete_rule_endpoint(rule_id: int, _auth: None = Depends(require_auth)):
+    await db.delete_rule(rule_id)
+    return {"success": True}
+
+
+@app.get("/api/dashboard", summary="Dashboard data")
+async def get_dashboard(_auth: None = Depends(require_auth)):
+    from datetime import datetime as _dt
+    now = _dt.utcnow()
+    year, month = now.year, now.month
+
+    accounts = await db.get_accounts()
+    for acc in accounts:
+        acc["balance"] = await db.get_account_balance(acc["id"])
+
+    summary = await db.get_monthly_summary(year, month)
+    breakdown = await db.get_category_breakdown(year, month)
+
+    # Recent transactions
+    recent = await db.get_transactions(limit=10)
+
+    total_expenses = summary["expenses"] or 1  # avoid division by zero
+    for item in breakdown:
+        item["pct"] = round((item["total"] / total_expenses) * 100, 1)
+
+    return {
+        "accounts": accounts,
+        "summary": {
+            "total_income": summary["income"],
+            "total_expenses": summary["expenses"],
+            "net": summary["net"],
+            "period": f"{now.strftime('%B %Y')}",
+        },
+        "by_category": breakdown,
+        "recent_transactions": recent,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
     html_path = Path("static/index.html")
