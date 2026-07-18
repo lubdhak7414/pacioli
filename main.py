@@ -1086,6 +1086,200 @@ async def list_backups(_auth: None = Depends(require_auth)):
     return {"backups": [Path(b).name for b in backups[:config.BACKUP_MAX_COUNT]]}
 
 
+# ── Tax-ready Reports ────────────────────────────────────────
+
+@app.get("/api/tax/summary", summary="Annual tax summary")
+async def tax_summary(year: int = None, _auth: None = Depends(require_auth)):
+    if not year:
+        year = datetime.utcnow().year
+    summary = await db.get_tax_summary(year)
+    return summary
+
+
+@app.get("/api/tax/transactions", summary="List transactions by tax tag")
+async def tax_transactions(year: int = None, tag: str = None,
+                           _auth: None = Depends(require_auth)):
+    if not year:
+        year = datetime.utcnow().year
+    txs = await db.get_tagged_transactions(year, tag)
+    return {"transactions": txs}
+
+
+@app.post("/api/tax/tag", summary="Tag a transaction for tax purposes")
+async def tag_transaction_endpoint(transaction_id: int, tag: str, notes: str = "",
+                                    _auth: None = Depends(require_auth)):
+    await db.tag_transaction(transaction_id, tag, notes)
+    return {"success": True}
+
+
+@app.delete("/api/tax/tag/{transaction_id}", summary="Remove tax tag")
+async def untag_transaction_endpoint(transaction_id: int,
+                                      _auth: None = Depends(require_auth)):
+    await db.untag_transaction(transaction_id)
+    return {"success": True}
+
+
+@app.post("/api/tax/auto-tag", summary="Auto-tag transactions by category")
+async def auto_tag_endpoint(year: int = None, _auth: None = Depends(require_auth)):
+    if not year:
+        year = datetime.utcnow().year
+    count = await db.auto_tag_transactions(year, config.TAX_CATEGORY_DEFAULTS)
+    return {"success": True, "tagged": count}
+
+
+@app.get("/api/tax/export", summary="Export tax summary as CSV")
+async def tax_export_csv(year: int = None, _auth: None = Depends(require_auth)):
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    if not year:
+        year = datetime.utcnow().year
+    txs = await db.get_tagged_transactions(year)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Description", "Account", "Category", "Amount", "Type", "Tax Tag", "Notes"])
+    for tx in txs:
+        writer.writerow([
+            tx.get("date", ""), tx.get("description", ""),
+            tx.get("account_name", ""), tx.get("category_name", ""),
+            tx.get("amount", 0), tx.get("type", ""),
+            tx.get("tag", "untagged"), tx.get("notes", ""),
+        ])
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=tax-report-{year}.csv"},
+    )
+
+
+# ── Bank CSV Import ──────────────────────────────────────────
+
+@app.get("/api/csv/profiles", summary="List saved CSV import profiles")
+async def list_csv_profiles(_auth: None = Depends(require_auth)):
+    profiles = await db.get_csv_profiles()
+    return {"profiles": profiles}
+
+
+@app.post("/api/csv/profiles", summary="Save a CSV import profile")
+async def create_csv_profile_endpoint(name: str, delimiter: str = ",",
+                                       date_col: int = 0, desc_col: int = 1,
+                                       amount_col: int = 2, has_header: int = 1,
+                                       date_format: str = "YYYY-MM-DD",
+                                       amount_positive: str = "positive",
+                                       _auth: None = Depends(require_auth)):
+    pid = await db.create_csv_profile(name, delimiter, date_col, desc_col,
+                                       amount_col, has_header, date_format, amount_positive)
+    return {"id": pid}
+
+
+@app.delete("/api/csv/profiles/{profile_id}", summary="Delete a CSV profile")
+async def delete_csv_profile_endpoint(profile_id: int, _auth: None = Depends(require_auth)):
+    await db.delete_csv_profile(profile_id)
+    return {"success": True}
+
+
+@app.post("/api/csv/preview", summary="Parse CSV and preview first rows")
+async def csv_preview(csv_text: str, delimiter: str = ",",
+                      _auth: None = Depends(require_auth)):
+    import csv
+    import io
+    reader = csv.reader(io.StringIO(csv_text), delimiter=delimiter)
+    rows = []
+    headers = None
+    for i, row in enumerate(reader):
+        if i == 0:
+            headers = row
+        elif i <= 5:
+            rows.append(row)
+        else:
+            break
+    return {"headers": headers or [], "preview": rows, "total_rows": csv_text.strip().count("\n") + 1}
+
+
+@app.post("/api/csv/import", summary="Import CSV transactions")
+async def csv_import(csv_text: str, delimiter: str = ",",
+                     date_col: int = 0, desc_col: int = 1, amount_col: int = 2,
+                     account_id: int = None, category_id: int = None,
+                     date_format: str = "YYYY-MM-DD",
+                     amount_positive: str = "positive",
+                     profile_name: str = None,
+                     _auth: None = Depends(require_auth)):
+    import csv
+    import io
+    from datetime import datetime as _dt
+
+    # Save profile if requested
+    if profile_name:
+        await db.create_csv_profile(profile_name, delimiter, date_col, desc_col,
+                                     amount_col, 1, date_format, amount_positive)
+
+    reader = csv.reader(io.StringIO(csv_text), delimiter=delimiter)
+    rows = list(reader)
+    if not rows:
+        return {"success": False, "message": "Empty CSV"}
+
+    # Skip header if first row looks like headers
+    start = 1 if rows[0][0].isalpha() else 0
+
+    # Get default account if not specified
+    if not account_id:
+        accounts = await db.get_accounts()
+        account_id = accounts[0]["id"] if accounts else None
+    if not account_id:
+        return {"success": False, "message": "No account specified and no accounts exist"}
+
+    imported = 0
+    skipped = 0
+    today = _dt.utcnow().strftime("%Y-%m-%d")
+
+    for row in rows[start:]:
+        try:
+            # Parse date
+            date_str = row[date_col].strip() if date_col < len(row) else today
+            if date_format == "MM/DD/YYYY" and "/" in date_str:
+                parts = date_str.split("/")
+                date_str = f"{parts[2]}-{parts[0]:0>2}-{parts[1]:0>2}"
+            elif date_format == "DD/MM/YYYY" and "/" in date_str:
+                parts = date_str.split("/")
+                date_str = f"{parts[2]}-{parts[1]:0>2}-{parts[0]:0>2}"
+
+            # Parse description
+            desc = row[desc_col].strip() if desc_col < len(row) else ""
+
+            # Parse amount
+            amount_str = row[amount_col].strip().replace("$", "").replace(",", "") if amount_col < len(row) else "0"
+            amount = float(amount_str)
+            if amount_positive == "absolute":
+                # Heuristic: negative if description contains certain keywords
+                neg_words = ["payment", "purchase", "debit", "fee", "charge", "withdrawal"]
+                if any(w in desc.lower() for w in neg_words):
+                    amount = -abs(amount)
+                elif amount > 0:
+                    amount = -abs(amount)  # Default to expense for absolute mode
+
+            # Determine type
+            tx_type = "income" if amount > 0 else "expense"
+
+            # Auto-categorize
+            cat_id = category_id
+            if not cat_id:
+                rule = await db.match_rule(desc)
+                if rule:
+                    cat_id = rule["category_id"]
+
+            await db.insert_transaction(
+                proposal_id=None, account_id=account_id, category_id=cat_id,
+                date=date_str, description=desc, amount=amount, tx_type=tx_type,
+            )
+            imported += 1
+        except (ValueError, IndexError):
+            skipped += 1
+
+    return {"success": True, "imported": imported, "skipped": skipped}
+
+
 # ── Updated Dashboard with monthly trend ─────────────────────
 
 @app.get("/api/dashboard", summary="Dashboard data")
