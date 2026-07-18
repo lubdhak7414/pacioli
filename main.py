@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
     # Backup ledger on startup (keep last 10)
     if ledger_p.exists():
         backups = sorted(Path("data").glob("ledger_backup_*.xlsx"))
-        for old in backups[:-9]:
+        for old in backups[:-10]:
             old.unlink(missing_ok=True)
         backup_name = f"data/ledger_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         shutil.copy2(ledger_engine.LEDGER_PATH, backup_name)
@@ -137,8 +137,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:*", "http://127.0.0.1:*"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -257,8 +257,12 @@ async def chat(request: ChatRequest):
             await db.insert_chat_message("assistant", err_msg)
             return ChatResponse(assistant_message=err_msg)
 
+        # Handle list responses (Gemini sometimes wraps in array)
+        if isinstance(ai_response, list) and len(ai_response) > 0:
+            ai_response = ai_response[0] if isinstance(ai_response[0], dict) else {"report": {"title": "Report"}}
+
         # ── Report (read-only, numbers computed from the ledger) ───
-        if "report" in ai_response:
+        if isinstance(ai_response, dict) and "report" in ai_response:
             report = ai_response["report"]
             # Compute the report from real ledger data — never trust AI numbers (item 4.1).
             try:
@@ -277,6 +281,10 @@ async def chat(request: ChatRequest):
             return ChatResponse(assistant_message=report_text)
 
         # ── Transaction proposal ──────────────────────────────────
+        if not isinstance(ai_response, dict):
+            msg = "The AI response was not in the expected format. Please try rephrasing."
+            await db.insert_chat_message("assistant", msg)
+            return ChatResponse(assistant_message=msg)
         proposal_data = ai_response.get("proposal")
         if not isinstance(proposal_data, dict):
             if proposal_data is not None:
@@ -366,13 +374,14 @@ async def get_proposal(proposal_id: int):
     for act in proposal["actions"]:
         old_val = None
         if act.get("cell_ref") and act["operation"] in ("write_cell", "write_formula"):
+            wb = ledger_engine.get_workbook(data_only=True)
             try:
-                wb = ledger_engine.get_workbook(data_only=True)
                 if act["sheet"] in wb.sheetnames:
                     old_val = wb[act["sheet"]][act["cell_ref"]].value
-                wb.close()
             except Exception:
                 old_val = "N/A"
+            finally:
+                wb.close()
         preview_actions.append({
             **act,
             "old_value_display": act.get("old_value", old_val),

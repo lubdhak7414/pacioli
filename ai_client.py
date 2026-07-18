@@ -98,17 +98,22 @@ def _log_request(model: str, contents, config_dict: dict):
     logger.info("Conversation messages: %d", len(contents))
 
 
-def _log_response(raw: str, parsed: dict, ms: float):
+def _log_response(raw: str, parsed, ms: float):
     _log_sep("AI RESPONSE — Received from Google Gemini")
     logger.info("Round-trip: %.0fms | Raw length: %d chars", ms, len(raw))
-    if "proposal" in parsed:
-        p = parsed["proposal"]
-        logger.info("Type=PROPOSAL  summary=%s  actions=%d",
-                    p.get("summary", "?"), len(p.get("actions", [])))
-    elif "report" in parsed:
-        logger.info("Type=REPORT  title=%s", parsed["report"].get("title", "?"))
+    if isinstance(parsed, dict):
+        if "proposal" in parsed:
+            p = parsed["proposal"]
+            logger.info("Type=PROPOSAL  summary=%s  actions=%d",
+                        p.get("summary", "?"), len(p.get("actions", [])))
+        elif "report" in parsed:
+            logger.info("Type=REPORT  title=%s", parsed["report"].get("title", "?"))
+        else:
+            logger.info("Unknown response keys: %s", list(parsed.keys()))
+    elif isinstance(parsed, list):
+        logger.info("Type=LIST  length=%d", len(parsed))
     else:
-        logger.info("Unknown response keys: %s", list(parsed.keys()))
+        logger.info("Type=UNKNOWN  %s", type(parsed).__name__)
     _log_sep("END AI RESPONSE")
 
 
