@@ -126,16 +126,23 @@ async def get_proposal(proposal_id: int) -> Optional[dict]:
         return None
 
 
-async def get_proposals(limit: int = 10) -> list[dict]:
-    """Return recent proposals for the history panel."""
+async def get_proposals(limit: int = 10, offset: int = 0) -> tuple[list[dict], int]:
+    """Return recent proposals for the history panel with pagination.
+
+    Returns (proposals, total_count).
+    """
     async with _conn() as db:
+        # Get total count
+        cursor = await db.execute("SELECT COUNT(*) FROM proposals")
+        total = (await cursor.fetchone())[0]
+        # Get page
         cursor = await db.execute(
             """SELECT id, status, user_message, ai_reasoning, created_at
-               FROM proposals ORDER BY id DESC LIMIT ?""",
-            (limit,),
+               FROM proposals ORDER BY id DESC LIMIT ? OFFSET ?""",
+            (limit, offset),
         )
         rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        return [dict(row) for row in rows], total
 
 
 async def approve_proposal_atomic(proposal_id: int) -> bool:
