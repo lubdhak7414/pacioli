@@ -23,13 +23,13 @@
             },
             colors: {
               ledger: {
-                bg: "#121218",
-                surface: "#1a1a22",
-                border: "#2a2a34",
-                accent: "#3b82f6",
-                success: "#22c55e",
-                danger: "#ef4444",
-                warn: "#f59e0b",
+                bg: "#ffffff",
+                surface: "#f7f8fa",
+                border: "#e5e7eb",
+                accent: "#0d9488",
+                success: "#16a34a",
+                danger: "#e11d48",
+                warn: "#d97706",
               },
             },
           },
@@ -37,34 +37,34 @@
       };
     </script>
   </head>
-  <body class="bg-ledger-bg text-gray-200 h-screen flex flex-col">
+  <body class="bg-ledger-bg text-gray-800 h-screen flex flex-col">
 
     <!-- Top accent bar -->
     <div class="accent-bar shrink-0"></div>
 
     <!-- Header -->
-    <header class="glass border-b px-6 py-4 flex items-center justify-between shrink-0" style="border-color: var(--glass-border);">
+    <header class="glass border-b px-6 py-4 flex items-center justify-between shrink-0" style="border-color: var(--border);">
       <div class="flex items-center gap-3">
-        <img src="/static/logo_doubleentry.svg" width="36" height="36" alt="Pacioli logo" class="transition hover:drop-shadow-[0_0_8px_rgba(59,130,246,0.4)]" />
+        <img src="/static/logo_doubleentry.svg" width="36" height="36" alt="Pacioli logo" class="transition hover:drop-shadow-[0_0_8px_rgba(13,148,136,0.3)]" />
         <div>
-          <h1 class="text-lg font-bold text-white tracking-tight">Pacioli</h1>
-          <p class="text-xs text-gray-500" style="letter-spacing: 0.02em;">Human-in-the-Loop Ledger Management</p>
+          <h1 class="text-lg font-bold tracking-tight" style="color: var(--text-primary);">Pacioli</h1>
+          <p class="text-xs" style="color: var(--text-muted); letter-spacing: 0.02em;">Human-in-the-Loop Ledger Management</p>
         </div>
       </div>
       <div class="flex items-center gap-4">
         <button onclick="showImportModal()" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5" title="Import CSV">&#128229; Import</button>
         <div class="relative" id="exportDropdown">
           <button onclick="toggleExportMenu()" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5" title="Export reports">&#128228; Export</button>
-          <div id="exportMenu" class="hidden absolute right-0 top-full mt-1 bg-[#1a1a22] border border-[rgba(42,42,52,0.5)] rounded-lg shadow-lg py-1 z-50 min-w-[160px]">
-            <a href="/api/ledger/download" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Download Ledger (.xlsx)</a>
-            <a href="/api/transactions/csv" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Export Transactions (.csv)</a>
-            <div class="border-t border-[rgba(42,42,52,0.3)] my-1"></div>
-            <a href="/api/reports/trial-balance/csv" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Trial Balance (.csv)</a>
-            <a href="/api/reports/trial-balance/xlsx" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Trial Balance (.xlsx)</a>
-            <a href="/api/reports/income-statement/csv" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Income Statement (.csv)</a>
-            <a href="/api/reports/income-statement/xlsx" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Income Statement (.xlsx)</a>
-            <a href="/api/reports/balance-sheet/csv" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Balance Sheet (.csv)</a>
-            <a href="/api/reports/balance-sheet/xlsx" class="block px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-[rgba(42,42,52,0.5)]">Balance Sheet (.xlsx)</a>
+          <div id="exportMenu" class="hidden absolute right-0 top-full mt-1 bg-white border rounded-lg shadow-lg py-1 z-50 min-w-[160px]" style="border-color: var(--border);">
+            <a href="/api/ledger/download" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Download Ledger (.xlsx)</a>
+            <a href="/api/transactions/csv" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Export Transactions (.csv)</a>
+            <div class="border-t my-1" style="border-color: var(--border-subtle);"></div>
+            <a href="/api/reports/trial-balance/csv" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Trial Balance (.csv)</a>
+            <a href="/api/reports/trial-balance/xlsx" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Trial Balance (.xlsx)</a>
+            <a href="/api/reports/income-statement/csv" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Income Statement (.csv)</a>
+            <a href="/api/reports/income-statement/xlsx" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Income Statement (.xlsx)</a>
+            <a href="/api/reports/balance-sheet/csv" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Balance Sheet (.csv)</a>
+            <a href="/api/reports/balance-sheet/xlsx" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Balance Sheet (.xlsx)</a>
           </div>
         </div>
         <button id="helpBtn" onclick="showExamples()" title="Show example prompts" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5">?</button>
@@ -79,14 +79,14 @@
       <div id="leftPanel" class="flex flex-col" style="width: 50%; min-width: 25%; max-width: 75%;">
 
         <!-- Search bar -->
-        <div class="px-4 pt-3 pb-2 shrink-0 flex items-center gap-2" style="border-bottom: 1px solid rgba(42,42,52,0.3);">
+        <div class="px-4 pt-3 pb-2 shrink-0 flex items-center gap-2" style="border-bottom: 1px solid var(--border-subtle);">
           <input
             type="text"
             id="searchInput"
             placeholder="Search messages..."
             aria-label="Search messages"
-            class="input-glow flex-1 rounded-lg px-3 py-1.5 text-xs placeholder-gray-600"
-            style="background: rgba(18,18,24,0.5); border: 1px solid var(--glass-border);"
+            class="input-glow flex-1 rounded-lg px-3 py-1.5 text-xs"
+            style="background: var(--surface); border: 1px solid var(--border); color: var(--text-secondary);"
           />
           <span id="searchCount" class="text-xs text-gray-600 shrink-0"></span>
         </div>
@@ -94,9 +94,9 @@
         <!-- Chat messages -->
         <div id="chatMessages" class="flex-1 overflow-y-auto chat-scroll p-6 space-y-6">
           <div class="fade-up flex gap-3" id="greetingMsg">
-            <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs shrink-0 mt-0.5" style="background: rgba(59,130,246,0.15); color: #60a5fa;">AI</div>
+            <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs shrink-0 mt-0.5" style="background: var(--primary-light); color: var(--primary);">AI</div>
             <div class="bubble-assistant px-4 py-3 max-w-[85%]">
-              <p class="text-sm leading-relaxed">Hello! I'm Pacioli. I can record transactions, generate reports, and manage your general ledger. What would you like to do?</p>
+              <p class="text-sm leading-relaxed" style="color: var(--text-secondary);">Hello! I'm Pacioli. I can record transactions, generate reports, and manage your general ledger. What would you like to do?</p>
             </div>
           </div>
         </div>
@@ -107,15 +107,15 @@
         </div>
 
         <!-- Input area -->
-        <div class="p-4 shrink-0" style="border-top: 1px solid rgba(42,42,52,0.3);">
+        <div class="p-4 shrink-0" style="border-top: 1px solid var(--border-subtle);">
           <form id="chatForm" class="flex gap-2">
             <input
               type="text"
               id="chatInput"
               placeholder="e.g. Record a $5,000 office supplies purchase on credit..."
               aria-label="Chat message"
-              class="input-glow flex-1 rounded-lg px-4 py-3 text-sm placeholder-gray-600"
-              style="background: rgba(18,18,24,0.5); border: 1px solid var(--glass-border);"
+              class="input-glow flex-1 rounded-lg px-4 py-3 text-sm"
+              style="background: var(--surface); border: 1px solid var(--border); color: var(--text-secondary);"
             />
             <button
               type="submit"
@@ -145,29 +145,33 @@
       <div id="rightPanel" class="flex flex-col flex-1 overflow-hidden">
 
         <!-- Tabs -->
-        <div class="flex shrink-0 text-sm" style="border-bottom: 1px solid var(--glass-border);">
+        <div class="flex shrink-0 text-sm" style="border-bottom: 1px solid var(--border);">
           <button id="tabProposal" onclick="switchTab('proposal')"
             class="tab-active px-5 py-3 font-medium transition">
             Proposal
           </button>
           <button id="tabLedger" onclick="switchTab('ledger')"
-            class="px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition">
+            class="px-5 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
             Ledger
           </button>
           <button id="tabTransactions" onclick="switchTab('transactions')"
-            class="px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition">
+            class="px-5 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
             Transactions
+          </button>
+          <button id="tabAudit" onclick="switchTab('audit')"
+            class="px-5 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
+            Audit
           </button>
         </div>
 
         <div class="flex-1 overflow-y-auto chat-scroll p-6">
           <!-- Proposal view -->
           <div id="proposalView">
-            <div id="proposalEmpty" class="h-full flex items-center justify-center text-gray-600 text-sm py-20">
+            <div id="proposalEmpty" class="h-full flex items-center justify-center text-sm py-20" style="color: var(--text-muted);">
               <div class="text-center">
                 <div class="empty-state-icon mb-3">&#9878;</div>
-                <p class="font-medium">No pending proposals</p>
-                <p class="text-xs mt-1 text-gray-700">Proposed edits will appear here for your review</p>
+                <p class="font-medium" style="color: var(--text-secondary);">No pending proposals</p>
+                <p class="text-xs mt-1" style="color: var(--text-muted);">Proposed edits will appear here for your review</p>
               </div>
             </div>
             <div id="proposalContent" class="hidden"></div>
@@ -176,16 +180,19 @@
           <div id="ledgerView" class="hidden"></div>
           <!-- Transaction history view -->
           <div id="transactionView" class="hidden"></div>
+          <!-- Audit trail view -->
+          <div id="auditView" class="hidden"></div>
         </div>
 
         <!-- Past proposals toggle -->
-        <div class="px-6 py-3 shrink-0" style="border-top: 1px solid rgba(42,42,52,0.3);">
+        <div class="px-6 py-3 shrink-0" style="border-top: 1px solid var(--border-subtle);">
           <button
             id="historyToggle"
             onclick="toggleHistory()"
-            class="w-full text-left text-xs text-gray-500 hover:text-gray-300 transition flex items-center gap-2"
+            class="w-full text-left text-xs transition flex items-center gap-2"
+            style="color: var(--text-muted);"
           >
-            <span id="historyArrow" class="text-gray-600 transition-transform">&#9654;</span>
+            <span id="historyArrow" class="transition-transform" style="color: var(--text-muted);">&#9654;</span>
             <span>Past Proposals</span>
           </button>
           <div id="historyPanel" class="hidden mt-3 space-y-1.5 max-h-72 overflow-y-auto chat-scroll"></div>
