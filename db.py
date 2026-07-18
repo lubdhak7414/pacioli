@@ -123,6 +123,28 @@ CREATE TABLE IF NOT EXISTS budgets (
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(category_id, year, month)
 );
+
+CREATE TABLE IF NOT EXISTS tax_tags (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_id  INTEGER NOT NULL REFERENCES transactions(id),
+    tag             TEXT NOT NULL CHECK(tag IN ('deductible','non-deductible','business','personal','capital_gains')),
+    notes           TEXT DEFAULT '',
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(transaction_id)
+);
+
+CREATE TABLE IF NOT EXISTS csv_profiles (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL UNIQUE,
+    delimiter       TEXT DEFAULT ',',
+    date_col        INTEGER NOT NULL,
+    desc_col        INTEGER NOT NULL,
+    amount_col      INTEGER NOT NULL,
+    has_header      INTEGER DEFAULT 1,
+    date_format     TEXT DEFAULT 'YYYY-MM-DD',
+    amount_positive TEXT DEFAULT 'positive',
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -767,3 +789,134 @@ async def create_transfer(from_account_id: int, to_account_id: int, amount: floa
             (to_account_id, date, description, abs(amount), pair_id),
         )
         return pair_id
+
+
+# ── Tax Tags ─────────────────────────────────────────────────
+
+async def tag_transaction(transaction_id: int, tag: str, notes: str = "") -> int:
+    async with _conn() as db:
+        cursor = await db.execute(
+            """INSERT INTO tax_tags (transaction_id, tag, notes)
+               VALUES (?, ?, ?)
+               ON CONFLICT(transaction_id) DO UPDATE SET tag=excluded.tag, notes=excluded.notes""",
+            (transaction_id, tag, notes),
+        )
+        return cursor.lastrowid
+
+
+async def untag_transaction(transaction_id: int):
+    async with _conn() as db:
+        await db.execute(
+            "DELETE FROM tax_tags WHERE transaction_id = ?", (transaction_id,)
+        )
+
+
+async def get_tax_summary(year: int) -> dict:
+    """Return tax summary for a year: totals by tag."""
+    async with _conn() as db:
+        cursor = await db.execute(
+            """SELECT tt.tag, COALESCE(SUM(ABS(t.amount)), 0) as total, COUNT(*) as count
+               FROM tax_tags tt
+               JOIN transactions t ON tt.transaction_id = t.id
+               WHERE t.date LIKE ?
+               GROUP BY tt.tag""",
+            (f"{year}%",),
+        )
+        by_tag = {row[0]: {"total": row[1], "count": row[2]} for row in await cursor.fetchall()}
+
+        # Total income
+        cursor = await db.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE date LIKE ? AND type = 'income'",
+            (f"{year}%",),
+        )
+        total_income = (await cursor.fetchone())[0]
+
+        # Total expenses
+        cursor = await db.execute(
+            "SELECT COALESCE(SUM(ABS(amount)), 0) FROM transactions WHERE date LIKE ? AND type = 'expense'",
+            (f"{year}%",),
+        )
+        total_expenses = (await cursor.fetchone())[0]
+
+        total_deductible = by_tag.get("deductible", {}).get("total", 0)
+        total_business = by_tag.get("business", {}).get("total", 0)
+        taxable_income = total_income - total_deductible - total_business
+
+        return {
+            "year": year,
+            "total_income": total_income,
+            "total_expenses": total_expenses,
+            "total_deductible": total_deductible,
+            "total_business": total_business,
+            "taxable_income": max(0, taxable_income),
+            "by_tag": by_tag,
+        }
+
+
+async def get_tagged_transactions(year: int, tag: str = None) -> list[dict]:
+    async with _conn() as db:
+        query = """
+            SELECT t.*, tt.tag, tt.notes, c.name as category_name, c.icon as category_icon,
+                   a.name as account_name
+            FROM transactions t
+            LEFT JOIN tax_tags tt ON t.id = tt.transaction_id
+            LEFT JOIN categories c ON t.category_id = c.id
+            LEFT JOIN accounts a ON t.account_id = a.id
+            WHERE t.date LIKE ?
+        """
+        params: list = [f"{year}%"]
+        if tag:
+            query += " AND tt.tag = ?"
+            params.append(tag)
+        query += " ORDER BY t.date DESC"
+        cursor = await db.execute(query, params)
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def auto_tag_transactions(year: int, category_defaults: dict) -> int:
+    """Auto-tag all untagged transactions in a year based on category defaults."""
+    async with _conn() as db:
+        cursor = await db.execute(
+            """SELECT t.id, c.name FROM transactions t
+               LEFT JOIN categories c ON t.category_id = c.id
+               LEFT JOIN tax_tags tt ON t.id = tt.transaction_id
+               WHERE t.date LIKE ? AND tt.id IS NULL""",
+            (f"{year}%",),
+        )
+        tagged = 0
+        for row in await cursor.fetchall():
+            tx_id, cat_name = row[0], row[1]
+            if cat_name and cat_name in category_defaults:
+                await db.execute(
+                    "INSERT INTO tax_tags (transaction_id, tag) VALUES (?, ?)",
+                    (tx_id, category_defaults[cat_name]),
+                )
+                tagged += 1
+        return tagged
+
+
+# ── CSV Profiles ─────────────────────────────────────────────
+
+async def get_csv_profiles() -> list[dict]:
+    async with _conn() as db:
+        cursor = await db.execute("SELECT * FROM csv_profiles ORDER BY name")
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def create_csv_profile(name: str, delimiter: str, date_col: int, desc_col: int,
+                              amount_col: int, has_header: int = 1,
+                              date_format: str = "YYYY-MM-DD",
+                              amount_positive: str = "positive") -> int:
+    async with _conn() as db:
+        cursor = await db.execute(
+            """INSERT INTO csv_profiles
+               (name, delimiter, date_col, desc_col, amount_col, has_header, date_format, amount_positive)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (name, delimiter, date_col, desc_col, amount_col, has_header, date_format, amount_positive),
+        )
+        return cursor.lastrowid
+
+
+async def delete_csv_profile(profile_id: int):
+    async with _conn() as db:
+        await db.execute("DELETE FROM csv_profiles WHERE id = ?", (profile_id,))

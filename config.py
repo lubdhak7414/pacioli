@@ -18,3 +18,19 @@ CHAT_RATE_LIMIT = os.getenv("CHAT_RATE_LIMIT", "10/minute")
 PROPOSAL_TIMEOUT_MINUTES = int(os.getenv("PROPOSAL_TIMEOUT_MINUTES", "15"))
 BACKUP_INTERVAL_HOURS = int(os.getenv("BACKUP_INTERVAL_HOURS", "24"))
 BACKUP_MAX_COUNT = int(os.getenv("BACKUP_MAX_COUNT", "30"))
+
+# Category → default tax tag for auto-tagging
+TAX_CATEGORY_DEFAULTS = {
+    "Food & Dining": "deductible",
+    "Transportation": "deductible",
+    "Housing": "deductible",
+    "Utilities": "deductible",
+    "Health": "deductible",
+    "Education": "deductible",
+    "Personal Care": "deductible",
+    "Entertainment": "personal",
+    "Shopping": "personal",
+    "Income": "non-deductible",
+    "Transfer": "non-deductible",
+    "Gifts": "personal",
+}
