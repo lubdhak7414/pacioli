@@ -205,21 +205,32 @@ async def insert_audit_log(proposal_id: int, action_index: int, sheet: str,
         )
 
 
+async def _reject_stale_proposals() -> int:
+    """Reject proposals pending for longer than the configured timeout. Returns count rejected."""
+    from config import PROPOSAL_TIMEOUT_MINUTES
+    async with _conn() as db:
+        cursor = await db.execute(
+            """UPDATE proposals
+               SET status = 'rejected', rejected_at = ?,
+                   error_message = ?
+               WHERE status = 'pending'
+                 AND replace(created_at, 'T', ' ') < datetime('now', ?)""",
+            (
+                datetime.utcnow().isoformat(),
+                f"Expired: pending for more than {PROPOSAL_TIMEOUT_MINUTES} minutes",
+                f"-{PROPOSAL_TIMEOUT_MINUTES} minutes",
+            ),
+        )
+        return cursor.rowcount
+
+
 async def cleanup_stale_proposals():
-    """Background task: auto-reject proposals pending for more than 15 minutes."""
+    """Background task: auto-reject proposals pending for longer than configured timeout."""
     while True:
         try:
-            async with _conn() as db:
-                cursor = await db.execute(
-                    """UPDATE proposals
-                       SET status = 'rejected', rejected_at = ?,
-                           error_message = 'Expired: pending for more than 15 minutes'
-                       WHERE status = 'pending'
-                         AND created_at < datetime('now', '-15 minutes')""",
-                    (datetime.utcnow().isoformat(),),
-                )
-                if cursor.rowcount > 0:
-                    logger.info("Cleaned up %d stale proposal(s).", cursor.rowcount)
+            count = await _reject_stale_proposals()
+            if count > 0:
+                logger.info("Cleaned up %d stale proposal(s).", count)
         except Exception as e:
             logger.error("Stale-proposal cleanup error: %s", e)
-        await asyncio.sleep(300)  # every 5 minutes
+        await asyncio.sleep(300)

@@ -11,10 +11,14 @@ from datetime import datetime
 from pathlib import Path
 
 import aiosqlite
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel, field_validator
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from fastapi.responses import JSONResponse
 
 import config
 import db
@@ -30,6 +34,9 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+# ── Rate limiting ──────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address)
 
 # ── Input sanitisation ────────────────────────────────────────────
 _ROLE_TAGS = re.compile(r"\[(SYSTEM|ASSISTANT|INST|USER)\]", re.IGNORECASE)
@@ -134,6 +141,14 @@ app = FastAPI(
     lifespan=lifespan,
     description="Human-in-the-loop AI-powered ledger management.",
 )
+app.state.limiter = limiter
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many requests. Please slow down."},
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -183,12 +198,30 @@ class ProposalDetail(BaseModel):
     user_message: str
     created_at: str
     validation_notes: list[str] = []
+    highlight_cells: dict[str, list[str]] = {}
 
 
 class ApprovalResponse(BaseModel):
     success: bool
     message: str
     change_log: list[str] | None = None
+
+
+# ── Authentication ─────────────────────────────────────────────────
+async def require_auth(request: Request):
+    """Check X-API-Key header or ?key= query param against APP_PASSWORD.
+
+    When APP_PASSWORD is empty (default), auth is disabled — zero-config for
+    local development.
+    """
+    if not config.APP_PASSWORD:
+        return
+    key = request.headers.get("X-API-Key") or request.query_params.get("key")
+    if key != config.APP_PASSWORD:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key. Set X-API-Key header.",
+        )
 
 
 # ── API Endpoints ─────────────────────────────────────────────────
@@ -212,7 +245,9 @@ async def health_check():
 
 @app.post("/api/chat", response_model=ChatResponse,
           summary="Send a message to Pacioli")
-async def chat(request: ChatRequest):
+@limiter.limit(config.CHAT_RATE_LIMIT)
+async def chat(request: Request, chat_req: ChatRequest,
+               _auth: None = Depends(require_auth)):
     """
     Full lifecycle:
     1. Sanitise & store user message
@@ -221,7 +256,9 @@ async def chat(request: ChatRequest):
     4. Validate & store proposal
     5. Return acknowledgement + proposal_id
     """
-    clean_msg = sanitize_input(request.message)
+    if len(chat_req.message) > config.MAX_INPUT_LENGTH:
+        raise HTTPException(400, f"Message exceeds {config.MAX_INPUT_LENGTH} characters")
+    clean_msg = sanitize_input(chat_req.message)
 
     await db.insert_chat_message("user", clean_msg)
     history = await db.get_chat_history(limit=20)
@@ -358,14 +395,16 @@ def _parse_notes(raw) -> list[str]:
 
 
 @app.get("/api/proposals", summary="List recent proposals")
-async def list_proposals(limit: int = 10):
+async def list_proposals(limit: int = 10,
+                         _auth: None = Depends(require_auth)):
     proposals = await db.get_proposals(limit=min(limit, 50))
     return {"proposals": proposals}
 
 
 @app.get("/api/proposals/{proposal_id}", response_model=ProposalDetail,
          summary="Fetch a proposal for preview")
-async def get_proposal(proposal_id: int):
+async def get_proposal(proposal_id: int,
+                       _auth: None = Depends(require_auth)):
     proposal = await db.get_proposal(proposal_id)
     if not proposal:
         raise HTTPException(404, "Proposal not found")
@@ -388,6 +427,14 @@ async def get_proposal(proposal_id: int):
             "new_value_display": act.get("new_value", act.get("formula", "")),
         })
 
+    # Build highlight map: sheet → list of cell refs that will change
+    highlight_cells: dict[str, list[str]] = {}
+    for act in proposal["actions"]:
+        sheet = act.get("sheet", "")
+        cell = act.get("cell_ref")
+        if cell:
+            highlight_cells.setdefault(sheet, []).append(cell)
+
     return ProposalDetail(
         id=proposal["id"],
         status=proposal["status"],
@@ -396,12 +443,14 @@ async def get_proposal(proposal_id: int):
         user_message=proposal["user_message"],
         created_at=proposal["created_at"],
         validation_notes=_parse_notes(proposal.get("validation_notes")),
+        highlight_cells=highlight_cells,
     )
 
 
 @app.post("/api/proposals/{proposal_id}/approve", response_model=ApprovalResponse,
           summary="Approve and execute a proposal")
-async def approve_proposal(proposal_id: int):
+async def approve_proposal(proposal_id: int,
+                           _auth: None = Depends(require_auth)):
     proposal = await db.get_proposal(proposal_id)
     if not proposal:
         raise HTTPException(404, "Proposal not found")
@@ -460,7 +509,8 @@ async def approve_proposal(proposal_id: int):
 
 @app.post("/api/proposals/{proposal_id}/reject", response_model=ApprovalResponse,
           summary="Reject a proposal")
-async def reject_proposal(proposal_id: int):
+async def reject_proposal(proposal_id: int,
+                          _auth: None = Depends(require_auth)):
     proposal = await db.get_proposal(proposal_id)
     if not proposal:
         raise HTTPException(404, "Proposal not found")
@@ -478,7 +528,8 @@ async def reject_proposal(proposal_id: int):
 
 @app.post("/api/proposals/{proposal_id}/restore", response_model=ApprovalResponse,
           summary="Restore the ledger to its state before this proposal (undo)")
-async def restore_proposal(proposal_id: int):
+async def restore_proposal(proposal_id: int,
+                           _auth: None = Depends(require_auth)):
     """Roll the ledger back to the snapshot taken before this proposal executed."""
     proposal = await db.get_proposal(proposal_id)
     if not proposal:
@@ -510,7 +561,8 @@ async def restore_proposal(proposal_id: int):
 
 
 @app.get("/api/ledger/preview", summary="Read-only preview of a ledger sheet")
-async def ledger_preview(sheet: str = "GeneralLedger", limit: int = 50):
+async def ledger_preview(sheet: str = "GeneralLedger", limit: int = 50,
+                         _auth: None = Depends(require_auth)):
     """Return the header row + first N data rows of a sheet as JSON (item 1.7)."""
     try:
         wb = ledger_engine.get_workbook(data_only=True)
@@ -534,13 +586,14 @@ async def ledger_preview(sheet: str = "GeneralLedger", limit: int = 50):
 
 
 @app.get("/api/chat/history", summary="Return full chat history")
-async def get_history():
+async def get_history(_auth: None = Depends(require_auth)):
     history = await db.get_chat_history(limit=100)
     return {"messages": history}
 
 
 @app.get("/api/audit", summary="Return audit log entries")
-async def get_audit(limit: int = 50):
+async def get_audit(limit: int = 50,
+                    _auth: None = Depends(require_auth)):
     async with aiosqlite.connect(db.DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
         cursor = await conn.execute(
@@ -551,7 +604,7 @@ async def get_audit(limit: int = 50):
 
 
 @app.get("/api/ledger/download", summary="Download the current ledger file")
-async def download_ledger():
+async def download_ledger(_auth: None = Depends(require_auth)):
     if not Path(ledger_engine.LEDGER_PATH).exists():
         raise HTTPException(404, "Ledger file not found.")
     return FileResponse(
@@ -561,8 +614,31 @@ async def download_ledger():
     )
 
 
+def _parse_transaction_row(new_value: str) -> dict:
+    """Parse a stringified insert_row values list into named fields.
+
+    GeneralLedger columns: Date, Ref, Description, Account, AccountName, Debit, Credit, Balance
+    """
+    try:
+        vals = json.loads(new_value.replace("'", '"'))
+        if not isinstance(vals, list):
+            return {}
+        return {
+            "date": str(vals[0]) if len(vals) > 0 else "",
+            "ref": str(vals[1]) if len(vals) > 1 else "",
+            "description": str(vals[2]) if len(vals) > 2 else "",
+            "account": str(vals[3]) if len(vals) > 3 else "",
+            "account_name": str(vals[4]) if len(vals) > 4 else "",
+            "debit": vals[5] if len(vals) > 5 else 0,
+            "credit": vals[6] if len(vals) > 6 else 0,
+        }
+    except (json.JSONDecodeError, TypeError, IndexError):
+        return {}
+
+
 @app.get("/api/transactions", summary="List executed transactions from audit log")
-async def get_transactions(limit: int = 50, search: str = ""):
+async def get_transactions(limit: int = 50, search: str = "",
+                           _auth: None = Depends(require_auth)):
     async with aiosqlite.connect(db.DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
         query = """
@@ -579,11 +655,23 @@ async def get_transactions(limit: int = 50, search: str = ""):
         params.append(min(limit, 200))
         cursor = await conn.execute(query, params)
         rows = await cursor.fetchall()
-    return {"transactions": [dict(r) for r in rows]}
+
+    transactions = []
+    for r in rows:
+        d = dict(r)
+        parsed = _parse_transaction_row(d.get("new_value") or "")
+        d["date"] = parsed.get("date", "")
+        d["account"] = parsed.get("account_name", "") or parsed.get("account", "")
+        d["debit"] = parsed.get("debit", 0)
+        d["credit"] = parsed.get("credit", 0)
+        d["description"] = parsed.get("description", "") or d.get("user_message", "")
+        transactions.append(d)
+    return {"transactions": transactions}
 
 
 @app.get("/api/reports/{report_type}/csv", summary="Download report as CSV")
-async def download_report_csv(report_type: str):
+async def download_report_csv(report_type: str,
+                              _auth: None = Depends(require_auth)):
     import csv
     import io
     from fastapi.responses import StreamingResponse
@@ -631,7 +719,8 @@ async def download_report_csv(report_type: str):
 
 
 @app.get("/api/reports/{report_type}/xlsx", summary="Download report as XLSX")
-async def download_report_xlsx(report_type: str):
+async def download_report_xlsx(report_type: str,
+                               _auth: None = Depends(require_auth)):
     from openpyxl import Workbook
     from fastapi.responses import StreamingResponse
     import io
@@ -699,7 +788,7 @@ async def download_report_xlsx(report_type: str):
 
 
 @app.get("/api/transactions/csv", summary="Download transactions as CSV")
-async def download_transactions_csv():
+async def download_transactions_csv(_auth: None = Depends(require_auth)):
     import csv
     import io
     from fastapi.responses import StreamingResponse
@@ -717,10 +806,17 @@ async def download_transactions_csv():
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["ID", "Proposal", "Sheet", "Cell", "Old Value", "New Value", "Date"])
+    writer.writerow(["Date", "Description", "Account", "Debit", "Credit", "Proposal"])
     for r in rows:
-        writer.writerow([r["id"], r["proposal_id"], r["sheet"], r["cell_ref"],
-                         r["old_value"], r["new_value"], r["executed_at"]])
+        parsed = _parse_transaction_row(r["new_value"] or "")
+        writer.writerow([
+            parsed.get("date", ""),
+            parsed.get("description", "") or r["user_message"],
+            parsed.get("account_name", "") or parsed.get("account", ""),
+            parsed.get("debit", 0),
+            parsed.get("credit", 0),
+            r["proposal_id"],
+        ])
     output.seek(0)
     return StreamingResponse(
         iter([output.getvalue()]),
