@@ -171,6 +171,8 @@ function copyMessage(btn) {
   var text = textEl.innerText || textEl.textContent;
   navigator.clipboard.writeText(text).then(function() {
     showToast("Copied to clipboard", "success");
+  }).catch(function() {
+    showToast("Failed to copy to clipboard", "error");
   });
 }
 
@@ -183,8 +185,9 @@ function showExamples() {
 }
 
 // Loading state
-var _t10, _t60;
+var _t10, _t60, _requestAborted;
 function showLoading() {
+  _requestAborted = false;
   sendBtn.disabled = true;
   chatInput.disabled = true;
 
@@ -194,6 +197,7 @@ function showLoading() {
   }, 10000);
 
   _t60 = setTimeout(function() {
+    _requestAborted = true;
     hideLoading();
     hideTyping();
     addMessage("assistant", "The request is taking too long. Please try again.");
@@ -238,6 +242,7 @@ function sendExample(text) {
 // Chat submit
 chatForm.addEventListener("submit", async function(e) {
   e.preventDefault();
+  if (sendBtn.disabled) return;
   var msg = chatInput.value.trim();
   if (!msg) return;
 
@@ -267,6 +272,7 @@ chatForm.addEventListener("submit", async function(e) {
       return;
     }
     var data = await res.json();
+    if (_requestAborted) return;
     addMessage("assistant", data.assistant_message, data.proposal_id);
 
     // Add CSV/XLSX download buttons for reports
@@ -779,7 +785,7 @@ function formatDate(d) {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 
-function setDateShortcut(preset) {
+function setDateShortcut(preset, event) {
   var today = new Date();
   var d;
   if (preset === "today") {
@@ -931,6 +937,9 @@ switchTab = function(tab) {
     document.getElementById("tabLedger").className = "px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition";
     document.getElementById("tabTransactions").className = "tab-active px-5 py-3 font-medium transition";
     loadTransactions();
+  } else {
+    document.getElementById("transactionView").classList.add("hidden");
+    document.getElementById("tabTransactions").className = "px-5 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition";
   }
 };
 
