@@ -145,28 +145,42 @@
       <div id="rightPanel" class="flex flex-col flex-1 overflow-hidden">
 
         <!-- Tabs -->
-        <div class="flex shrink-0 text-sm" style="border-bottom: 1px solid var(--border);">
+        <div class="flex shrink-0 text-sm overflow-x-auto" style="border-bottom: 1px solid var(--border);">
+          <button id="tabDashboard" onclick="switchTab('dashboard')"
+            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
+            Dashboard
+          </button>
           <button id="tabProposal" onclick="switchTab('proposal')"
-            class="tab-active px-5 py-3 font-medium transition">
-            Proposal
+            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
+            Proposals
           </button>
           <button id="tabLedger" onclick="switchTab('ledger')"
-            class="px-5 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
+            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
             Ledger
           </button>
           <button id="tabTransactions" onclick="switchTab('transactions')"
-            class="px-5 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
+            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
             Transactions
           </button>
+          <button id="tabAccounts" onclick="switchTab('accounts')"
+            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
+            Accounts
+          </button>
+          <button id="tabCategories" onclick="switchTab('categories')"
+            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
+            Categories
+          </button>
           <button id="tabAudit" onclick="switchTab('audit')"
-            class="px-5 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
+            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
             Audit
           </button>
         </div>
 
         <div class="flex-1 overflow-y-auto chat-scroll p-6">
+          <!-- Dashboard view -->
+          <div id="dashboardView"></div>
           <!-- Proposal view -->
-          <div id="proposalView">
+          <div id="proposalView" class="hidden">
             <div id="proposalEmpty" class="h-full flex items-center justify-center text-sm py-20" style="color: var(--text-muted);">
               <div class="text-center">
                 <div class="empty-state-icon mb-3">&#9878;</div>
@@ -180,6 +194,10 @@
           <div id="ledgerView" class="hidden"></div>
           <!-- Transaction history view -->
           <div id="transactionView" class="hidden"></div>
+          <!-- Accounts view -->
+          <div id="accountsView" class="hidden"></div>
+          <!-- Categories view -->
+          <div id="categoriesView" class="hidden"></div>
           <!-- Audit trail view -->
           <div id="auditView" class="hidden"></div>
         </div>

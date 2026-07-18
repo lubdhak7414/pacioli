@@ -1260,6 +1260,238 @@ async function submitCSVImport() {
   chatForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 }
 
+// ── Dashboard ───────────────────────────────────────────────
+async function loadDashboard() {
+  var view = document.getElementById("dashboardView");
+  view.innerHTML = '<div class="flex items-center gap-2 text-xs py-4" style="color: var(--text-muted);">' +
+    '<span class="typing-dot inline-block w-1.5 h-1.5 rounded-full" style="background: var(--text-muted);"></span>' +
+    '<span>Loading dashboard...</span></div>';
+  try {
+    var res = await apiFetch("/api/dashboard");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var d = await res.json();
+
+    // Account cards
+    var accountsHtml = (d.accounts || []).map(function(a) {
+      var color = a.balance >= 0 ? "var(--success)" : "var(--danger)";
+      return '<div class="dash-card">' +
+        '<p class="text-xs" style="color: var(--text-muted);">' + escHtml(a.name) + '</p>' +
+        '<p class="text-lg font-bold font-mono mt-1" style="color: ' + color + ';">$' + Math.abs(a.balance).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p>' +
+        '<p class="text-xs mt-0.5" style="color: var(--text-muted);">' + escHtml(a.type) + '</p>' +
+      '</div>';
+    }).join("");
+
+    // Summary
+    var s = d.summary || {};
+    var netColor = (s.net || 0) >= 0 ? "var(--success)" : "var(--danger)";
+
+    // Category chart
+    var cats = d.by_category || [];
+    var maxAmt = cats.length > 0 ? cats[0].total : 1;
+    var catHtml = cats.map(function(c) {
+      var pct = (c.total / maxAmt) * 100;
+      return '<div class="flex items-center gap-2 text-xs mb-2">' +
+        '<span class="w-24 truncate" style="color: var(--text-secondary);">' + escHtml(c.icon || "") + ' ' + escHtml(c.name || "Uncategorized") + '</span>' +
+        '<div class="flex-1 h-4 rounded" style="background: var(--surface);">' +
+          '<div class="h-4 rounded" style="width: ' + pct + '%; background: var(--primary);"></div>' +
+        '</div>' +
+        '<span class="w-16 text-right font-mono" style="color: var(--text-secondary);">$' + c.total.toLocaleString(undefined, {minimumFractionDigits: 0}) + '</span>' +
+        '<span class="w-10 text-right" style="color: var(--text-muted);">' + (c.pct || 0) + '%</span>' +
+      '</div>';
+    }).join("");
+
+    // Recent transactions
+    var txHtml = (d.recent_transactions || []).map(function(tx) {
+      var sign = tx.amount < 0 ? "-" : "+";
+      var color = tx.amount < 0 ? "var(--danger)" : "var(--success)";
+      return '<div class="flex items-center gap-3 text-xs py-2" style="border-bottom: 1px solid var(--border-subtle);">' +
+        '<span style="color: var(--text-muted); min-width: 70px;">' + escHtml(tx.date || "") + '</span>' +
+        '<span class="flex-1 truncate" style="color: var(--text-secondary);">' + escHtml(tx.description || tx.category_name || "") + '</span>' +
+        '<span class="text-xs px-1.5 py-0.5 rounded" style="background: var(--surface); color: var(--text-muted);">' + escHtml(tx.category_icon || "") + ' ' + escHtml(tx.category_name || "—") + '</span>' +
+        '<span class="font-mono font-medium" style="color: ' + color + ';">' + sign + '$' + Math.abs(tx.amount).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</span>' +
+      '</div>';
+    }).join("");
+
+    view.innerHTML =
+      '<div class="fade-up">' +
+        // Account cards
+        '<div class="flex gap-3 mb-6 flex-wrap">' + accountsHtml + '</div>' +
+        // Summary + chart row
+        '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">' +
+          '<div class="dash-card">' +
+            '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">' + escHtml(s.period || "This Month") + '</p>' +
+            '<div class="flex gap-4">' +
+              '<div><p class="text-xs" style="color: var(--text-muted);">Income</p><p class="text-sm font-bold font-mono" style="color: var(--success);">$' + (s.total_income || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
+              '<div><p class="text-xs" style="color: var(--text-muted);">Expenses</p><p class="text-sm font-bold font-mono" style="color: var(--danger);">$' + (s.total_expenses || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
+              '<div><p class="text-xs" style="color: var(--text-muted);">Net</p><p class="text-sm font-bold font-mono" style="color: ' + netColor + ';">$' + (s.net || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="dash-card">' +
+            '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">Spending by Category</p>' +
+            (catHtml || '<p class="text-xs" style="color: var(--text-muted);">No expenses this month</p>') +
+          '</div>' +
+        '</div>' +
+        // Recent transactions
+        '<div class="dash-card">' +
+          '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">Recent Transactions</p>' +
+          (txHtml || '<p class="text-xs" style="color: var(--text-muted);">No transactions yet</p>') +
+        '</div>' +
+      '</div>';
+  } catch (err) {
+    view.innerHTML = '<p class="text-sm" style="color: var(--danger);">Failed to load dashboard.</p>';
+  }
+}
+
+// ── Accounts Tab ────────────────────────────────────────────
+async function loadAccounts() {
+  var view = document.getElementById("accountsView");
+  view.innerHTML = '<div class="flex items-center gap-2 text-xs py-4" style="color: var(--text-muted);"><span>Loading...</span></div>';
+  try {
+    var res = await apiFetch("/api/accounts");
+    var data = await res.json();
+    var accounts = data.accounts || [];
+
+    var html = '<div class="flex items-center justify-between mb-4">' +
+      '<h3 class="text-sm font-medium" style="color: var(--text-primary);">Accounts</h3>' +
+      '<button onclick="showAddAccountModal()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">+ Add Account</button>' +
+    '</div>';
+
+    if (accounts.length === 0) {
+      html += '<p class="text-xs" style="color: var(--text-muted);">No accounts yet.</p>';
+    } else {
+      accounts.forEach(function(a) {
+        var bal = a.balance || 0;
+        var color = bal >= 0 ? "var(--success)" : "var(--danger)";
+        html += '<div class="dash-card flex items-center justify-between mb-3">' +
+          '<div>' +
+            '<p class="text-sm font-medium" style="color: var(--text-primary);">' + escHtml(a.name) + '</p>' +
+            '<p class="text-xs" style="color: var(--text-muted);">' + escHtml(a.type) + ' &middot; ' + escHtml(a.currency) + '</p>' +
+          '</div>' +
+          '<div class="text-right">' +
+            '<p class="text-sm font-bold font-mono" style="color: ' + color + ';">$' + Math.abs(bal).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p>' +
+            '<button onclick="deleteAccount(' + a.id + ')" class="text-xs mt-1" style="color: var(--danger);">Remove</button>' +
+          '</div>' +
+        '</div>';
+      });
+    }
+    view.innerHTML = html;
+  } catch (err) {
+    view.innerHTML = '<p class="text-sm" style="color: var(--danger);">Failed to load accounts.</p>';
+  }
+}
+
+function showAddAccountModal() {
+  var existing = document.getElementById("addAccountModal");
+  if (existing) existing.remove();
+  var modal = document.createElement("div");
+  modal.id = "addAccountModal";
+  modal.className = "modal-overlay";
+  modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+  modal.innerHTML =
+    '<div class="modal-content">' +
+      '<h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Add Account</h3>' +
+      '<input id="accName" type="text" class="input-glow w-full rounded-lg px-3 py-2 text-sm mb-3" ' +
+        'style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);" ' +
+        'placeholder="Account name (e.g. Main Checking)" />' +
+      '<select id="accType" class="w-full rounded-lg px-3 py-2 text-sm mb-3" ' +
+        'style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);">' +
+        '<option value="checking">Checking</option><option value="savings">Savings</option>' +
+        '<option value="credit">Credit Card</option><option value="cash">Cash</option>' +
+        '<option value="investment">Investment</option></select>' +
+      '<div class="flex gap-2">' +
+        '<button onclick="submitAddAccount()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1">Add</button>' +
+        '<button onclick="document.getElementById(\'addAccountModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(modal);
+}
+
+async function submitAddAccount() {
+  var name = document.getElementById("accName").value.trim();
+  var type = document.getElementById("accType").value;
+  if (!name) { showToast("Please enter a name", "error"); return; }
+  document.getElementById("addAccountModal").remove();
+  try {
+    var res = await apiFetch("/api/accounts?name=" + encodeURIComponent(name) + "&acc_type=" + type, { method: "POST" });
+    if (res.ok) { showToast("Account created", "success"); loadAccounts(); loadDashboard(); }
+    else showToast("Failed to create account", "error");
+  } catch (e) { showToast("Failed to create account", "error"); }
+}
+
+async function deleteAccount(id) {
+  if (!confirm("Remove this account?")) return;
+  var res = await apiFetch("/api/accounts/" + id, { method: "DELETE" });
+  if (res.ok) { showToast("Account removed", "success"); loadAccounts(); loadDashboard(); }
+}
+
+// ── Categories Tab ──────────────────────────────────────────
+async function loadCategories() {
+  var view = document.getElementById("categoriesView");
+  view.innerHTML = '<div class="flex items-center gap-2 text-xs py-4" style="color: var(--text-muted);"><span>Loading...</span></div>';
+  try {
+    var res = await apiFetch("/api/categories");
+    var data = await res.json();
+    var cats = data.categories || [];
+
+    var html = '<div class="flex items-center justify-between mb-4">' +
+      '<h3 class="text-sm font-medium" style="color: var(--text-primary);">Categories</h3>' +
+      '<button onclick="showAddCategoryModal()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">+ Add Category</button>' +
+    '</div>';
+
+    if (cats.length === 0) {
+      html += '<p class="text-xs" style="color: var(--text-muted);">No categories yet.</p>';
+    } else {
+      html += '<div class="grid grid-cols-2 sm:grid-cols-3 gap-2">';
+      cats.forEach(function(c) {
+        html += '<div class="dash-card flex items-center gap-2">' +
+          '<span class="text-lg">' + escHtml(c.icon || "📁") + '</span>' +
+          '<span class="text-xs font-medium" style="color: var(--text-secondary);">' + escHtml(c.name) + '</span>' +
+        '</div>';
+      });
+      html += '</div>';
+    }
+    view.innerHTML = html;
+  } catch (err) {
+    view.innerHTML = '<p class="text-sm" style="color: var(--danger);">Failed to load categories.</p>';
+  }
+}
+
+function showAddCategoryModal() {
+  var existing = document.getElementById("addCategoryModal");
+  if (existing) existing.remove();
+  var modal = document.createElement("div");
+  modal.id = "addCategoryModal";
+  modal.className = "modal-overlay";
+  modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+  modal.innerHTML =
+    '<div class="modal-content">' +
+      '<h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Add Category</h3>' +
+      '<input id="catName" type="text" class="input-glow w-full rounded-lg px-3 py-2 text-sm mb-3" ' +
+        'style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);" ' +
+        'placeholder="Category name (e.g. Groceries)" />' +
+      '<input id="catIcon" type="text" class="input-glow w-full rounded-lg px-3 py-2 text-sm mb-3" ' +
+        'style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);" ' +
+        'placeholder="Emoji icon (optional)" />' +
+      '<div class="flex gap-2">' +
+        '<button onclick="submitAddCategory()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1">Add</button>' +
+        '<button onclick="document.getElementById(\'addCategoryModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(modal);
+}
+
+async function submitAddCategory() {
+  var name = document.getElementById("catName").value.trim();
+  var icon = document.getElementById("catIcon").value.trim();
+  if (!name) { showToast("Please enter a name", "error"); return; }
+  document.getElementById("addCategoryModal").remove();
+  try {
+    var res = await apiFetch("/api/categories?name=" + encodeURIComponent(name) + "&icon=" + encodeURIComponent(icon), { method: "POST" });
+    if (res.ok) { showToast("Category created", "success"); loadCategories(); }
+    else showToast("Failed to create category", "error");
+  } catch (e) { showToast("Failed to create category", "error"); }
+}
+
 // ── Audit Trail Tab ─────────────────────────────────────────
 async function loadAuditTrail() {
   var view = document.getElementById("auditView");
@@ -1316,42 +1548,37 @@ async function loadAuditTrail() {
 }
 
 // ── Extended Tabs ───────────────────────────────────────────
-var _origSwitchTab = switchTab;
-var _allTabIds = ["tabProposal", "tabLedger", "tabTransactions", "tabAudit"];
-var _idleClass = "px-5 py-3 font-medium border-b-2 border-transparent transition";
-var _activeClass = "tab-active px-5 py-3 font-medium transition";
+var _allTabIds = ["tabDashboard", "tabProposal", "tabLedger", "tabTransactions", "tabAccounts", "tabCategories", "tabAudit"];
+var _allViewIds = ["dashboardView", "proposalView", "ledgerView", "transactionView", "accountsView", "categoriesView", "auditView"];
+var _idleClass = "px-4 py-3 font-medium border-b-2 border-transparent transition";
+var _activeClass = "tab-active px-4 py-3 font-medium transition";
 
 function _resetAllTabs() {
   _allTabIds.forEach(function(id) {
-    document.getElementById(id).className = _idleClass;
+    var el = document.getElementById(id);
+    if (el) el.className = _idleClass;
   });
-  document.getElementById("proposalView").classList.add("hidden");
-  document.getElementById("ledgerView").classList.add("hidden");
-  document.getElementById("transactionView").classList.add("hidden");
-  document.getElementById("auditView").classList.add("hidden");
+  _allViewIds.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.classList.add("hidden");
+  });
 }
 
 switchTab = function(tab) {
-  if (tab === "transactions" || tab === "audit") {
-    // Handle extended tabs directly
-    _resetAllTabs();
-    if (tab === "transactions") {
-      document.getElementById("transactionView").classList.remove("hidden");
-      document.getElementById("tabTransactions").className = _activeClass;
-      loadTransactions();
-    } else if (tab === "audit") {
-      document.getElementById("auditView").classList.remove("hidden");
-      document.getElementById("tabAudit").className = _activeClass;
-      loadAuditTrail();
-    }
-  } else {
-    // proposal / ledger — delegate to original
-    _origSwitchTab(tab);
-    document.getElementById("transactionView").classList.add("hidden");
-    document.getElementById("auditView").classList.add("hidden");
-    document.getElementById("tabTransactions").className = _idleClass;
-    document.getElementById("tabAudit").className = _idleClass;
-  }
+  _resetAllTabs();
+  var tabId = "tab" + tab.charAt(0).toUpperCase() + tab.slice(1);
+  var viewId = tab + "View";
+  var tabEl = document.getElementById(tabId);
+  var viewEl = document.getElementById(viewId);
+  if (tabEl) tabEl.className = _activeClass;
+  if (viewEl) viewEl.classList.remove("hidden");
+
+  if (tab === "dashboard") loadDashboard();
+  else if (tab === "ledger") loadLedgerPreview();
+  else if (tab === "transactions") loadTransactions();
+  else if (tab === "accounts") loadAccounts();
+  else if (tab === "categories") loadCategories();
+  else if (tab === "audit") loadAuditTrail();
 };
 
 // Initialize action buttons on load
@@ -1364,8 +1591,11 @@ if (historyOpen) {
   var arrow = document.getElementById("historyArrow");
   if (panel) panel.classList.remove("hidden");
   if (arrow) arrow.innerHTML = "&#9660;";
-  loadHistory();
+  loadHistory(true);
 }
 if (currentProposalId) {
   loadProposal(currentProposalId);
+} else {
+  // Default to dashboard tab
+  switchTab("dashboard");
 }

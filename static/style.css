@@ -412,6 +412,18 @@ input[type="date"].date-shortcut {
   box-shadow: inset 0 0 6px rgba(13,148,136,0.06);
 }
 
+/* ── Dashboard Cards ──────────────────────────────────── */
+.dash-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  transition: border-color 0.2s;
+}
+.dash-card:hover {
+  border-color: var(--primary-border);
+}
+
 /* ── Report Tables ────────────────────────────────────── */
 .report-table th {
   cursor: pointer;
