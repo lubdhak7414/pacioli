@@ -99,6 +99,30 @@ CREATE TABLE IF NOT EXISTS categorization_rules (
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(pattern, category_id)
 );
+
+CREATE TABLE IF NOT EXISTS recurring_transactions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id      INTEGER NOT NULL REFERENCES accounts(id),
+    category_id     INTEGER REFERENCES categories(id),
+    description     TEXT NOT NULL,
+    amount          REAL NOT NULL,
+    type            TEXT NOT NULL CHECK(type IN ('income','expense')),
+    frequency       TEXT NOT NULL CHECK(frequency IN ('weekly','biweekly','monthly','quarterly','yearly')),
+    next_date       TEXT NOT NULL,
+    is_active       INTEGER DEFAULT 1,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS budgets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    category_id INTEGER NOT NULL REFERENCES categories(id),
+    amount      REAL NOT NULL,
+    period      TEXT NOT NULL DEFAULT 'monthly',
+    year        INTEGER NOT NULL,
+    month       INTEGER NOT NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(category_id, year, month)
+);
 """
 
 
@@ -121,6 +145,11 @@ async def init_db():
     async with _conn() as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(INIT_SQL)
+        # Migration: add transfer_pair_id if missing
+        try:
+            await db.execute("ALTER TABLE transactions ADD COLUMN transfer_pair_id INTEGER")
+        except Exception:
+            pass  # Column already exists
     await seed_personal_tables()
 
 
@@ -563,3 +592,178 @@ async def learn_rule(description: str, category_id: int):
                 "INSERT INTO categorization_rules (pattern, category_id, use_count) VALUES (?, ?, 1)",
                 (pattern, category_id),
             )
+
+
+# ── Recurring Transactions ───────────────────────────────────
+
+async def get_recurring() -> list[dict]:
+    async with _conn() as db:
+        cursor = await db.execute(
+            """SELECT r.*, a.name as account_name, c.name as category_name, c.icon as category_icon
+               FROM recurring_transactions r
+               LEFT JOIN accounts a ON r.account_id = a.id
+               LEFT JOIN categories c ON r.category_id = c.id
+               ORDER BY r.next_date"""
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def create_recurring(account_id: int, category_id: int, description: str,
+                           amount: float, tx_type: str, frequency: str, next_date: str) -> int:
+    async with _conn() as db:
+        cursor = await db.execute(
+            """INSERT INTO recurring_transactions
+               (account_id, category_id, description, amount, type, frequency, next_date)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (account_id, category_id, description, amount, tx_type, frequency, next_date),
+        )
+        return cursor.lastrowid
+
+
+async def update_recurring(recurring_id: int, **kwargs):
+    async with _conn() as db:
+        fields, vals = [], []
+        for key in ("description", "amount", "frequency", "next_date", "is_active", "category_id", "account_id"):
+            if key in kwargs and kwargs[key] is not None:
+                fields.append(f"{key} = ?")
+                vals.append(kwargs[key])
+        if not fields:
+            return
+        vals.append(recurring_id)
+        await db.execute(
+            f"UPDATE recurring_transactions SET {', '.join(fields)} WHERE id = ?", vals
+        )
+
+
+async def delete_recurring(recurring_id: int):
+    async with _conn() as db:
+        await db.execute(
+            "UPDATE recurring_transactions SET is_active = 0 WHERE id = ?", (recurring_id,)
+        )
+
+
+async def get_due_recurring() -> list[dict]:
+    """Return recurring transactions where next_date <= today."""
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    async with _conn() as db:
+        cursor = await db.execute(
+            """SELECT * FROM recurring_transactions
+               WHERE is_active = 1 AND next_date <= ?""",
+            (today,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def advance_recurring(recurring_id: int, frequency: str, current_date: str):
+    """Advance next_date based on frequency."""
+    from datetime import timedelta
+    d = datetime.strptime(current_date, "%Y-%m-%d")
+    if frequency == "weekly":
+        d += timedelta(weeks=1)
+    elif frequency == "biweekly":
+        d += timedelta(weeks=2)
+    elif frequency == "monthly":
+        month = d.month + 1
+        year = d.year
+        if month > 12:
+            month = 1
+            year += 1
+        d = d.replace(year=year, month=month)
+    elif frequency == "quarterly":
+        month = d.month + 3
+        year = d.year
+        while month > 12:
+            month -= 12
+            year += 1
+        d = d.replace(year=year, month=month)
+    elif frequency == "yearly":
+        d = d.replace(year=d.year + 1)
+    async with _conn() as db:
+        await db.execute(
+            "UPDATE recurring_transactions SET next_date = ? WHERE id = ?",
+            (d.strftime("%Y-%m-%d"), recurring_id),
+        )
+
+
+# ── Budgets ──────────────────────────────────────────────────
+
+async def get_budgets(year: int, month: int) -> list[dict]:
+    async with _conn() as db:
+        cursor = await db.execute(
+            """SELECT b.*, c.name as category_name, c.icon as category_icon
+               FROM budgets b
+               LEFT JOIN categories c ON b.category_id = c.id
+               WHERE b.year = ? AND b.month = ?
+               ORDER BY c.name""",
+            (year, month),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def set_budget(category_id: int, amount: float, year: int, month: int) -> int:
+    async with _conn() as db:
+        cursor = await db.execute(
+            """INSERT INTO budgets (category_id, amount, year, month)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(category_id, year, month) DO UPDATE SET amount = excluded.amount""",
+            (category_id, amount, year, month),
+        )
+        return cursor.lastrowid
+
+
+async def delete_budget(budget_id: int):
+    async with _conn() as db:
+        await db.execute("DELETE FROM budgets WHERE id = ?", (budget_id,))
+
+
+async def get_budget_status(year: int, month: int) -> list[dict]:
+    """Return budget vs actual spending per category for a month."""
+    month_str = f"{year}-{month:02d}"
+    async with _conn() as db:
+        cursor = await db.execute(
+            """SELECT b.id, b.category_id, b.amount as budget_amount,
+                      c.name as category_name, c.icon as category_icon,
+                      COALESCE(SUM(ABS(t.amount)), 0) as spent
+               FROM budgets b
+               LEFT JOIN categories c ON b.category_id = c.id
+               LEFT JOIN transactions t ON t.category_id = b.category_id
+                   AND t.date LIKE ? AND t.type = 'expense'
+               WHERE b.year = ? AND b.month = ?
+               GROUP BY b.id
+               ORDER BY c.name""",
+            (f"{month_str}%", year, month),
+        )
+        results = []
+        for row in await cursor.fetchall():
+            d = dict(row)
+            d["pct"] = round((d["spent"] / d["budget_amount"]) * 100, 1) if d["budget_amount"] > 0 else 0
+            results.append(d)
+        return results
+
+
+# ── Transfers ────────────────────────────────────────────────
+
+async def create_transfer(from_account_id: int, to_account_id: int, amount: float,
+                          description: str, date: str) -> int:
+    """Create a paired transfer (expense on source, income on destination)."""
+    async with _conn() as db:
+        cursor = await db.execute(
+            "SELECT COALESCE(MAX(transfer_pair_id), 0) + 1 FROM transactions"
+        )
+        pair_id = (await cursor.fetchone())[0]
+
+        # Expense on source account (money leaves)
+        await db.execute(
+            """INSERT INTO transactions
+               (account_id, date, description, amount, type, transfer_pair_id)
+               VALUES (?, ?, ?, ?, 'expense', ?)""",
+            (from_account_id, date, description, -abs(amount), pair_id),
+        )
+        # Income on destination account (money arrives)
+        await db.execute(
+            """INSERT INTO transactions
+               (account_id, date, description, amount, type, transfer_pair_id)
+               VALUES (?, ?, ?, ?, 'income', ?)""",
+            (to_account_id, date, description, abs(amount), pair_id),
+        )
+        return pair_id
