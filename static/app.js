@@ -1263,15 +1263,13 @@ async function submitCSVImport() {
 // ── Dashboard ───────────────────────────────────────────────
 async function loadDashboard() {
   var view = document.getElementById("dashboardView");
-  view.innerHTML = '<div class="flex items-center gap-2 text-xs py-4" style="color: var(--text-muted);">' +
-    '<span class="typing-dot inline-block w-1.5 h-1.5 rounded-full" style="background: var(--text-muted);"></span>' +
-    '<span>Loading dashboard...</span></div>';
+  view.innerHTML = '<div class="text-xs py-4" style="color: var(--text-muted);">Loading dashboard...</div>';
   try {
     var res = await apiFetch("/api/dashboard");
     if (!res.ok) throw new Error("HTTP " + res.status);
     var d = await res.json();
 
-    // Account cards
+    // Account cards with transfer button
     var accountsHtml = (d.accounts || []).map(function(a) {
       var color = a.balance >= 0 ? "var(--success)" : "var(--danger)";
       return '<div class="dash-card">' +
@@ -1280,10 +1278,18 @@ async function loadDashboard() {
         '<p class="text-xs mt-0.5" style="color: var(--text-muted);">' + escHtml(a.type) + '</p>' +
       '</div>';
     }).join("");
+    if (d.accounts && d.accounts.length >= 2) {
+      accountsHtml += '<div class="dash-card flex items-center justify-center cursor-pointer" onclick="showTransferModal()" style="border-style: dashed;">' +
+        '<p class="text-sm font-medium" style="color: var(--primary);">🔄 Transfer</p></div>';
+    }
 
-    // Summary
+    // Summary + donut chart
     var s = d.summary || {};
     var netColor = (s.net || 0) >= 0 ? "var(--success)" : "var(--danger)";
+    var donutHtml = renderDonutChart(s.total_income || 0, s.total_expenses || 0);
+
+    // Monthly trend line chart
+    var trendHtml = renderLineChart(d.monthly_trend || []);
 
     // Category chart
     var cats = d.by_category || [];
@@ -1297,6 +1303,20 @@ async function loadDashboard() {
         '</div>' +
         '<span class="w-16 text-right font-mono" style="color: var(--text-secondary);">$' + c.total.toLocaleString(undefined, {minimumFractionDigits: 0}) + '</span>' +
         '<span class="w-10 text-right" style="color: var(--text-muted);">' + (c.pct || 0) + '%</span>' +
+      '</div>';
+    }).join("");
+
+    // Budget progress
+    var budgets = d.budgets || [];
+    var budgetHtml = budgets.map(function(b) {
+      var pct = b.pct || 0;
+      var barColor = pct > 100 ? "var(--danger)" : pct > 80 ? "var(--warning)" : "var(--success)";
+      return '<div class="flex items-center gap-2 text-xs mb-2">' +
+        '<span class="w-20 truncate" style="color: var(--text-secondary);">' + escHtml(b.category_icon || "") + ' ' + escHtml(b.category_name || "") + '</span>' +
+        '<div class="flex-1 h-2 rounded" style="background: var(--surface);">' +
+          '<div class="h-2 rounded" style="width: ' + Math.min(pct, 100) + '%; background: ' + barColor + ';"></div>' +
+        '</div>' +
+        '<span class="w-12 text-right font-mono" style="color: ' + barColor + ';">' + pct + '%</span>' +
       '</div>';
     }).join("");
 
@@ -1314,21 +1334,44 @@ async function loadDashboard() {
 
     view.innerHTML =
       '<div class="fade-up">' +
-        // Account cards
-        '<div class="flex gap-3 mb-6 flex-wrap">' + accountsHtml + '</div>' +
-        // Summary + chart row
-        '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">' +
-          '<div class="dash-card">' +
-            '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">' + escHtml(s.period || "This Month") + '</p>' +
-            '<div class="flex gap-4">' +
-              '<div><p class="text-xs" style="color: var(--text-muted);">Income</p><p class="text-sm font-bold font-mono" style="color: var(--success);">$' + (s.total_income || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
-              '<div><p class="text-xs" style="color: var(--text-muted);">Expenses</p><p class="text-sm font-bold font-mono" style="color: var(--danger);">$' + (s.total_expenses || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
-              '<div><p class="text-xs" style="color: var(--text-muted);">Net</p><p class="text-sm font-bold font-mono" style="color: ' + netColor + ';">$' + (s.net || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
+        // Account cards + transfer
+        '<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-6">' + accountsHtml + '</div>' +
+        // Summary row: donut + income/expenses + trend
+        '<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">' +
+          '<div class="dash-card flex flex-col items-center">' +
+            '<p class="text-xs font-medium mb-2" style="color: var(--text-muted);">' + escHtml(s.period || "This Month") + '</p>' +
+            donutHtml +
+            '<div class="flex gap-4 mt-2 text-xs">' +
+              '<span style="color: var(--success);">● Income</span>' +
+              '<span style="color: var(--danger);">● Expenses</span>' +
             '</div>' +
           '</div>' +
           '<div class="dash-card">' +
+            '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">Income vs Expenses</p>' +
+            '<div class="space-y-2">' +
+              '<div><p class="text-xs" style="color: var(--text-muted);">Income</p><p class="text-lg font-bold font-mono" style="color: var(--success);">$' + (s.total_income || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
+              '<div><p class="text-xs" style="color: var(--text-muted);">Expenses</p><p class="text-lg font-bold font-mono" style="color: var(--danger);">$' + (s.total_expenses || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
+              '<div><p class="text-xs" style="color: var(--text-muted);">Net</p><p class="text-lg font-bold font-mono" style="color: ' + netColor + ';">$' + (s.net || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="dash-card">' +
+            '<p class="text-xs font-medium mb-2" style="color: var(--text-muted);">6-Month Trend</p>' +
+            trendHtml +
+            '<div class="flex gap-3 mt-1 text-xs">' +
+              '<span style="color: var(--success);">● Income</span>' +
+              '<span style="color: var(--danger);">● Expenses</span>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        // Category + Budget row
+        '<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">' +
+          '<div class="dash-card">' +
             '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">Spending by Category</p>' +
             (catHtml || '<p class="text-xs" style="color: var(--text-muted);">No expenses this month</p>') +
+          '</div>' +
+          '<div class="dash-card">' +
+            '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">Budget Progress</p>' +
+            (budgetHtml || '<p class="text-xs" style="color: var(--text-muted);">No budgets set. Go to Budgets tab to create one.</p>') +
           '</div>' +
         '</div>' +
         // Recent transactions
@@ -1492,6 +1535,288 @@ async function submitAddCategory() {
   } catch (e) { showToast("Failed to create category", "error"); }
 }
 
+// ── Recurring Transactions Tab ──────────────────────────────
+async function loadRecurring() {
+  var view = document.getElementById("recurringView");
+  view.innerHTML = '<div class="text-xs py-4" style="color: var(--text-muted);">Loading...</div>';
+  try {
+    var res = await apiFetch("/api/recurring");
+    var data = await res.json();
+    var items = data.recurring || [];
+
+    var html = '<div class="flex items-center justify-between mb-4">' +
+      '<h3 class="text-sm font-medium" style="color: var(--text-primary);">Recurring Transactions</h3>' +
+      '<button onclick="showAddRecurringModal()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">+ Add</button>' +
+    '</div>';
+
+    if (items.length === 0) {
+      html += '<p class="text-xs" style="color: var(--text-muted);">No recurring transactions. Add your rent, salary, subscriptions here.</p>';
+    } else {
+      items.forEach(function(r) {
+        var sign = r.type === "income" ? "+" : "-";
+        var color = r.type === "income" ? "var(--success)" : "var(--danger)";
+        var status = r.is_active ? "" : '<span class="text-xs ml-2" style="color: var(--text-muted);">(paused)</span>';
+        html += '<div class="dash-card flex items-center justify-between mb-3">' +
+          '<div>' +
+            '<p class="text-sm font-medium" style="color: var(--text-primary);">' + escHtml(r.description) + status + '</p>' +
+            '<p class="text-xs" style="color: var(--text-muted);">' + escHtml(r.frequency) + ' &middot; next: ' + escHtml(r.next_date) + ' &middot; ' + escHtml(r.account_name || "") + '</p>' +
+          '</div>' +
+          '<div class="text-right flex items-center gap-2">' +
+            '<span class="font-mono font-medium" style="color: ' + color + ';">' + sign + '$' + Math.abs(r.amount).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</span>' +
+            '<button onclick="executeRecurring(' + r.id + ')" class="text-xs px-2 py-1 rounded" style="color: var(--primary);" title="Execute now">▶</button>' +
+            '<button onclick="deleteRecurring(' + r.id + ')" class="text-xs px-2 py-1 rounded" style="color: var(--danger);" title="Pause">⏸</button>' +
+          '</div>' +
+        '</div>';
+      });
+    }
+    view.innerHTML = html;
+  } catch (err) {
+    view.innerHTML = '<p class="text-sm" style="color: var(--danger);">Failed to load recurring transactions.</p>';
+  }
+}
+
+function showAddRecurringModal() {
+  var existing = document.getElementById("addRecurringModal");
+  if (existing) existing.remove();
+  // Load accounts for dropdown
+  apiFetch("/api/accounts").then(function(res) { return res.json(); }).then(function(data) {
+    var accounts = data.accounts || [];
+    var accOpts = accounts.map(function(a) { return '<option value="' + a.id + '">' + escHtml(a.name) + '</option>'; }).join("");
+    return apiFetch("/api/categories");
+  }).then(function(res) { return res.json(); }).then(function(data) {
+    var cats = data.categories || [];
+    var catOpts = cats.map(function(c) { return '<option value="' + c.id + '">' + escHtml(c.icon || "") + ' ' + escHtml(c.name) + '</option>'; }).join("");
+
+    var modal = document.createElement("div");
+    modal.id = "addRecurringModal";
+    modal.className = "modal-overlay";
+    modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML =
+      '<div class="modal-content">' +
+        '<h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Add Recurring Transaction</h3>' +
+        '<input id="recDesc" type="text" class="input-glow w-full rounded-lg px-3 py-2 text-sm mb-2" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);" placeholder="Description (e.g. Monthly rent)" />' +
+        '<div class="flex gap-2 mb-2">' +
+          '<input id="recAmount" type="number" step="0.01" class="input-glow flex-1 rounded-lg px-3 py-2 text-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);" placeholder="Amount" />' +
+          '<select id="recType" class="rounded-lg px-3 py-2 text-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);"><option value="expense">Expense</option><option value="income">Income</option></select>' +
+        '</div>' +
+        '<select id="recAccount" class="w-full rounded-lg px-3 py-2 text-sm mb-2" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);">' + accOpts + '</select>' +
+        '<select id="recCategory" class="w-full rounded-lg px-3 py-2 text-sm mb-2" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);"><option value="">No category</option>' + catOpts + '</select>' +
+        '<div class="flex gap-2 mb-3">' +
+          '<select id="recFreq" class="flex-1 rounded-lg px-3 py-2 text-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);">' +
+            '<option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="biweekly">Biweekly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select>' +
+          '<input id="recNextDate" type="date" class="flex-1 rounded-lg px-3 py-2 text-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);" />' +
+        '</div>' +
+        '<div class="flex gap-2">' +
+          '<button onclick="submitAddRecurring()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1">Add</button>' +
+          '<button onclick="document.getElementById(\'addRecurringModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(modal);
+  });
+}
+
+async function submitAddRecurring() {
+  var desc = document.getElementById("recDesc").value.trim();
+  var amount = parseFloat(document.getElementById("recAmount").value);
+  var txType = document.getElementById("recType").value;
+  var accountId = parseInt(document.getElementById("recAccount").value);
+  var categoryId = parseInt(document.getElementById("recCategory").value) || null;
+  var freq = document.getElementById("recFreq").value;
+  var nextDate = document.getElementById("recNextDate").value;
+  if (!desc || !amount || !nextDate) { showToast("Fill in all required fields", "error"); return; }
+  document.getElementById("addRecurringModal").remove();
+  var params = "account_id=" + accountId + "&description=" + encodeURIComponent(desc) + "&amount=" + amount + "&tx_type=" + txType + "&frequency=" + freq + "&next_date=" + nextDate;
+  if (categoryId) params += "&category_id=" + categoryId;
+  var res = await apiFetch("/api/recurring?" + params, { method: "POST" });
+  if (res.ok) { showToast("Recurring transaction added", "success"); loadRecurring(); }
+  else showToast("Failed to add", "error");
+}
+
+async function executeRecurring(id) {
+  var res = await apiFetch("/api/recurring/" + id + "/execute", { method: "POST" });
+  if (res.ok) { showToast("Executed", "success"); loadRecurring(); }
+  else showToast("Failed to execute", "error");
+}
+
+async function deleteRecurring(id) {
+  if (!confirm("Pause this recurring transaction?")) return;
+  var res = await apiFetch("/api/recurring/" + id, { method: "DELETE" });
+  if (res.ok) { showToast("Paused", "success"); loadRecurring(); }
+}
+
+// ── Budgets Tab ─────────────────────────────────────────────
+async function loadBudgets() {
+  var view = document.getElementById("budgetsView");
+  view.innerHTML = '<div class="text-xs py-4" style="color: var(--text-muted);">Loading...</div>';
+  try {
+    var now = new Date();
+    var res = await apiFetch("/api/budgets?year=" + now.getFullYear() + "&month=" + (now.getMonth() + 1));
+    var data = await res.json();
+    var budgets = data.budgets || [];
+
+    var html = '<div class="flex items-center justify-between mb-4">' +
+      '<h3 class="text-sm font-medium" style="color: var(--text-primary);">Budgets — ' + now.toLocaleString(undefined, {month: "long", year: "numeric"}) + '</h3>' +
+      '<button onclick="showAddBudgetModal()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">+ Set Budget</button>' +
+    '</div>';
+
+    if (budgets.length === 0) {
+      html += '<p class="text-xs" style="color: var(--text-muted);">No budgets set. Create budgets to track spending limits per category.</p>';
+    } else {
+      budgets.forEach(function(b) {
+        var pct = b.pct || 0;
+        var barColor = pct > 100 ? "var(--danger)" : pct > 80 ? "var(--warning)" : "var(--success)";
+        html += '<div class="dash-card mb-3">' +
+          '<div class="flex items-center justify-between mb-2">' +
+            '<span class="text-sm font-medium" style="color: var(--text-primary);">' + escHtml(b.category_icon || "") + ' ' + escHtml(b.category_name || "Unknown") + '</span>' +
+            '<span class="text-xs font-mono" style="color: var(--text-secondary);">$' + (b.spent || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + ' / $' + (b.budget_amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</span>' +
+          '</div>' +
+          '<div class="w-full h-2 rounded" style="background: var(--surface);">' +
+            '<div class="h-2 rounded" style="width: ' + Math.min(pct, 100) + '%; background: ' + barColor + ';"></div>' +
+          '</div>' +
+          '<div class="flex justify-between mt-1">' +
+            '<span class="text-xs" style="color: ' + barColor + ';">' + pct + '% used</span>' +
+            '<button onclick="deleteBudget(' + b.id + ')" class="text-xs" style="color: var(--danger);">Remove</button>' +
+          '</div>' +
+        '</div>';
+      });
+    }
+    view.innerHTML = html;
+  } catch (err) {
+    view.innerHTML = '<p class="text-sm" style="color: var(--danger);">Failed to load budgets.</p>';
+  }
+}
+
+function showAddBudgetModal() {
+  apiFetch("/api/categories").then(function(res) { return res.json(); }).then(function(data) {
+    var cats = data.categories || [];
+    var catOpts = cats.map(function(c) { return '<option value="' + c.id + '">' + escHtml(c.icon || "") + ' ' + escHtml(c.name) + '</option>'; }).join("");
+    var modal = document.createElement("div");
+    modal.id = "addBudgetModal";
+    modal.className = "modal-overlay";
+    modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML =
+      '<div class="modal-content">' +
+        '<h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Set Monthly Budget</h3>' +
+        '<select id="budgetCategory" class="w-full rounded-lg px-3 py-2 text-sm mb-3" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);">' + catOpts + '</select>' +
+        '<input id="budgetAmount" type="number" step="0.01" class="input-glow w-full rounded-lg px-3 py-2 text-sm mb-3" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);" placeholder="Monthly limit amount" />' +
+        '<div class="flex gap-2">' +
+          '<button onclick="submitAddBudget()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1">Set Budget</button>' +
+          '<button onclick="document.getElementById(\'addBudgetModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(modal);
+  });
+}
+
+async function submitAddBudget() {
+  var categoryId = parseInt(document.getElementById("budgetCategory").value);
+  var amount = parseFloat(document.getElementById("budgetAmount").value);
+  if (!amount || amount <= 0) { showToast("Enter a valid amount", "error"); return; }
+  document.getElementById("addBudgetModal").remove();
+  var res = await apiFetch("/api/budgets?category_id=" + categoryId + "&amount=" + amount, { method: "POST" });
+  if (res.ok) { showToast("Budget set", "success"); loadBudgets(); }
+  else showToast("Failed to set budget", "error");
+}
+
+async function deleteBudget(id) {
+  if (!confirm("Remove this budget?")) return;
+  var res = await apiFetch("/api/budgets/" + id, { method: "DELETE" });
+  if (res.ok) { showToast("Budget removed", "success"); loadBudgets(); }
+}
+
+// ── Transfer Modal ──────────────────────────────────────────
+function showTransferModal() {
+  apiFetch("/api/accounts").then(function(res) { return res.json(); }).then(function(data) {
+    var accounts = data.accounts || [];
+    var accOpts = accounts.map(function(a) { return '<option value="' + a.id + '">' + escHtml(a.name) + ' ($' + (a.balance || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + ')</option>'; }).join("");
+    var modal = document.createElement("div");
+    modal.id = "transferModal";
+    modal.className = "modal-overlay";
+    modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML =
+      '<div class="modal-content">' +
+        '<h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Transfer Between Accounts</h3>' +
+        '<label class="text-xs mb-1 block" style="color: var(--text-muted);">From</label>' +
+        '<select id="transferFrom" class="w-full rounded-lg px-3 py-2 text-sm mb-2" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);">' + accOpts + '</select>' +
+        '<label class="text-xs mb-1 block" style="color: var(--text-muted);">To</label>' +
+        '<select id="transferTo" class="w-full rounded-lg px-3 py-2 text-sm mb-2" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);">' + accOpts + '</select>' +
+        '<input id="transferAmount" type="number" step="0.01" class="input-glow w-full rounded-lg px-3 py-2 text-sm mb-2" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);" placeholder="Amount" />' +
+        '<input id="transferDesc" type="text" class="input-glow w-full rounded-lg px-3 py-2 text-sm mb-3" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);" placeholder="Description (e.g. Transfer to savings)" />' +
+        '<div class="flex gap-2">' +
+          '<button onclick="submitTransfer()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1">Transfer</button>' +
+          '<button onclick="document.getElementById(\'transferModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(modal);
+  });
+}
+
+async function submitTransfer() {
+  var from = parseInt(document.getElementById("transferFrom").value);
+  var to = parseInt(document.getElementById("transferTo").value);
+  var amount = parseFloat(document.getElementById("transferAmount").value);
+  var desc = document.getElementById("transferDesc").value.trim() || "Transfer";
+  if (from === to) { showToast("Cannot transfer to the same account", "error"); return; }
+  if (!amount || amount <= 0) { showToast("Enter a valid amount", "error"); return; }
+  document.getElementById("transferModal").remove();
+  var res = await apiFetch("/api/transfers?from_account_id=" + from + "&to_account_id=" + to + "&amount=" + amount + "&description=" + encodeURIComponent(desc), { method: "POST" });
+  if (res.ok) { showToast("Transfer completed", "success"); loadDashboard(); loadAccounts(); }
+  else showToast("Transfer failed", "error");
+}
+
+// ── Charts ──────────────────────────────────────────────────
+function renderDonutChart(income, expenses) {
+  var total = income + expenses;
+  if (total === 0) return '<p class="text-xs" style="color: var(--text-muted);">No data</p>';
+  var incPct = (income / total) * 100;
+  var expPct = (expenses / total) * 100;
+  var r = 40, cx = 50, cy = 50;
+  function arc(pct, color) {
+    if (pct <= 0) return "";
+    var angle = (pct / 100) * 360;
+    var startRad = (-90) * Math.PI / 180;
+    var endRad = (-90 + angle) * Math.PI / 180;
+    var x1 = cx + r * Math.cos(startRad), y1 = cy + r * Math.sin(startRad);
+    var x2 = cx + r * Math.cos(endRad), y2 = cy + r * Math.sin(endRad);
+    var large = angle > 180 ? 1 : 0;
+    return '<path d="M' + cx + ',' + cy + ' L' + x1 + ',' + y1 + ' A' + r + ',' + r + ' 0 ' + large + ',1 ' + x2 + ',' + y2 + ' Z" fill="' + color + '" />';
+  }
+  return '<svg viewBox="0 0 100 100" class="w-24 h-24">' +
+    arc(expPct, "#e11d48") + arc(incPct, "#16a34a") +
+    '<circle cx="' + cx + '" cy="' + cy + '" r="25" fill="white" />' +
+    '<text x="' + cx + '" y="' + (cy - 2) + '" text-anchor="middle" font-size="6" fill="#334155" font-weight="bold">$' + (total).toLocaleString(undefined, {maximumFractionDigits: 0}) + '</text>' +
+    '<text x="' + cx + '" y="' + (cy + 5) + '" text-anchor="middle" font-size="4" fill="#94a3b8">total</text>' +
+  '</svg>';
+}
+
+function renderLineChart(trend) {
+  if (!trend || trend.length === 0) return '<p class="text-xs" style="color: var(--text-muted);">No trend data</p>';
+  var maxVal = 0;
+  trend.forEach(function(t) { maxVal = Math.max(maxVal, t.income, t.expenses); });
+  if (maxVal === 0) maxVal = 1;
+  var w = 200, h = 60, pad = 10;
+  var stepX = (w - pad * 2) / (trend.length - 1 || 1);
+
+  function pts(key) {
+    return trend.map(function(t, i) {
+      var x = pad + i * stepX;
+      var y = h - pad - ((t[key] / maxVal) * (h - pad * 2));
+      return x + "," + y;
+    }).join(" ");
+  }
+
+  var labels = trend.map(function(t, i) {
+    var x = pad + i * stepX;
+    return '<text x="' + x + '" y="' + (h - 1) + '" text-anchor="middle" font-size="4" fill="#94a3b8">' + t.label + '</text>';
+  }).join("");
+
+  return '<svg viewBox="0 0 ' + w + ' ' + h + '" class="w-full h-16">' +
+    '<polyline points="' + pts("income") + '" fill="none" stroke="#16a34a" stroke-width="1.5" />' +
+    '<polyline points="' + pts("expenses") + '" fill="none" stroke="#e11d48" stroke-width="1.5" />' +
+    labels +
+  '</svg>';
+}
+
 // ── Audit Trail Tab ─────────────────────────────────────────
 async function loadAuditTrail() {
   var view = document.getElementById("auditView");
@@ -1548,8 +1873,8 @@ async function loadAuditTrail() {
 }
 
 // ── Extended Tabs ───────────────────────────────────────────
-var _allTabIds = ["tabDashboard", "tabProposal", "tabLedger", "tabTransactions", "tabAccounts", "tabCategories", "tabAudit"];
-var _allViewIds = ["dashboardView", "proposalView", "ledgerView", "transactionView", "accountsView", "categoriesView", "auditView"];
+var _allTabIds = ["tabDashboard", "tabProposal", "tabRecurring", "tabBudgets", "tabTransactions", "tabAccounts", "tabCategories", "tabLedger", "tabAudit"];
+var _allViewIds = ["dashboardView", "proposalView", "recurringView", "budgetsView", "transactionView", "accountsView", "categoriesView", "ledgerView", "auditView"];
 var _idleClass = "px-4 py-3 font-medium border-b-2 border-transparent transition";
 var _activeClass = "tab-active px-4 py-3 font-medium transition";
 
@@ -1578,6 +1903,8 @@ switchTab = function(tab) {
   else if (tab === "transactions") loadTransactions();
   else if (tab === "accounts") loadAccounts();
   else if (tab === "categories") loadCategories();
+  else if (tab === "recurring") loadRecurring();
+  else if (tab === "budgets") loadBudgets();
   else if (tab === "audit") loadAuditTrail();
 };
 

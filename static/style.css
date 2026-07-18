@@ -424,6 +424,32 @@ input[type="date"].date-shortcut {
   border-color: var(--primary-border);
 }
 
+/* ── Tab Bar ──────────────────────────────────────────── */
+.tab-bar {
+  gap: 0;
+}
+.tab-btn {
+  padding: 0.75rem 1rem;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.tab-btn:hover {
+  color: var(--text-secondary);
+}
+.tab-active {
+  color: var(--primary) !important;
+  border-bottom-color: var(--primary) !important;
+}
+
+/* ── Charts ───────────────────────────────────────────── */
+svg text {
+  font-family: inherit;
+}
+
 /* ── Report Tables ────────────────────────────────────── */
 .report-table th {
   cursor: pointer;
@@ -440,7 +466,12 @@ input[type="date"].date-shortcut {
 
 /* ── Mobile ───────────────────────────────────────────── */
 @media (max-width: 768px) {
-  #leftPanel  { width: 100% !important; min-width: 100% !important; max-width: 100% !important; border-right: none; border-bottom: 1px solid var(--border); max-height: 55vh; }
+  #leftPanel  { width: 100% !important; min-width: 100% !important; max-width: 100% !important; border-right: none; border-bottom: 1px solid var(--border); max-height: 50vh; }
   #rightPanel { width: 100%; }
   #mainLayout { flex-direction: column; }
+  #divider { display: none; }
+  .tab-btn { padding: 0.5rem 0.75rem; font-size: 0.7rem; }
+  .dash-card { padding: 0.75rem; }
+  .modal-content { margin: 1rem; max-height: 90vh; overflow-y: auto; }
+  header { padding: 0.75rem 1rem; }
 }

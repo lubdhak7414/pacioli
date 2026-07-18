@@ -55,16 +55,14 @@
         <button onclick="showImportModal()" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5" title="Import CSV">&#128229; Import</button>
         <div class="relative" id="exportDropdown">
           <button onclick="toggleExportMenu()" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5" title="Export reports">&#128228; Export</button>
-          <div id="exportMenu" class="hidden absolute right-0 top-full mt-1 bg-white border rounded-lg shadow-lg py-1 z-50 min-w-[160px]" style="border-color: var(--border);">
+          <div id="exportMenu" class="hidden absolute right-0 top-full mt-1 bg-white border rounded-lg shadow-lg py-1 z-50 min-w-[180px]" style="border-color: var(--border);">
             <a href="/api/ledger/download" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Download Ledger (.xlsx)</a>
-            <a href="/api/transactions/csv" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Export Transactions (.csv)</a>
+            <a href="/api/export/csv" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Export All Transactions (.csv)</a>
+            <a href="/api/export/json" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Export Full Data (.json)</a>
             <div class="border-t my-1" style="border-color: var(--border-subtle);"></div>
             <a href="/api/reports/trial-balance/csv" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Trial Balance (.csv)</a>
-            <a href="/api/reports/trial-balance/xlsx" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Trial Balance (.xlsx)</a>
             <a href="/api/reports/income-statement/csv" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Income Statement (.csv)</a>
-            <a href="/api/reports/income-statement/xlsx" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Income Statement (.xlsx)</a>
             <a href="/api/reports/balance-sheet/csv" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Balance Sheet (.csv)</a>
-            <a href="/api/reports/balance-sheet/xlsx" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Balance Sheet (.xlsx)</a>
           </div>
         </div>
         <button id="helpBtn" onclick="showExamples()" title="Show example prompts" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5">?</button>
@@ -145,38 +143,19 @@
       <div id="rightPanel" class="flex flex-col flex-1 overflow-hidden">
 
         <!-- Tabs -->
-        <div class="flex shrink-0 text-sm overflow-x-auto" style="border-bottom: 1px solid var(--border);">
-          <button id="tabDashboard" onclick="switchTab('dashboard')"
-            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
-            Dashboard
-          </button>
-          <button id="tabProposal" onclick="switchTab('proposal')"
-            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
-            Proposals
-          </button>
-          <button id="tabLedger" onclick="switchTab('ledger')"
-            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
-            Ledger
-          </button>
-          <button id="tabTransactions" onclick="switchTab('transactions')"
-            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
-            Transactions
-          </button>
-          <button id="tabAccounts" onclick="switchTab('accounts')"
-            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
-            Accounts
-          </button>
-          <button id="tabCategories" onclick="switchTab('categories')"
-            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
-            Categories
-          </button>
-          <button id="tabAudit" onclick="switchTab('audit')"
-            class="px-4 py-3 font-medium border-b-2 border-transparent transition" style="color: var(--text-muted);">
-            Audit
-          </button>
+        <div class="flex shrink-0 text-xs overflow-x-auto tab-bar" style="border-bottom: 1px solid var(--border);">
+          <button id="tabDashboard" onclick="switchTab('dashboard')" class="tab-btn">Dashboard</button>
+          <button id="tabProposal" onclick="switchTab('proposal')" class="tab-btn">Proposals</button>
+          <button id="tabRecurring" onclick="switchTab('recurring')" class="tab-btn">Recurring</button>
+          <button id="tabBudgets" onclick="switchTab('budgets')" class="tab-btn">Budgets</button>
+          <button id="tabTransactions" onclick="switchTab('transactions')" class="tab-btn">Transactions</button>
+          <button id="tabAccounts" onclick="switchTab('accounts')" class="tab-btn">Accounts</button>
+          <button id="tabCategories" onclick="switchTab('categories')" class="tab-btn">Categories</button>
+          <button id="tabLedger" onclick="switchTab('ledger')" class="tab-btn">Ledger</button>
+          <button id="tabAudit" onclick="switchTab('audit')" class="tab-btn">Audit</button>
         </div>
 
-        <div class="flex-1 overflow-y-auto chat-scroll p-6">
+        <div class="flex-1 overflow-y-auto chat-scroll p-4 md:p-6">
           <!-- Dashboard view -->
           <div id="dashboardView"></div>
           <!-- Proposal view -->
@@ -194,6 +173,10 @@
           <div id="ledgerView" class="hidden"></div>
           <!-- Transaction history view -->
           <div id="transactionView" class="hidden"></div>
+          <!-- Recurring view -->
+          <div id="recurringView" class="hidden"></div>
+          <!-- Budgets view -->
+          <div id="budgetsView" class="hidden"></div>
           <!-- Accounts view -->
           <div id="accountsView" class="hidden"></div>
           <!-- Categories view -->
