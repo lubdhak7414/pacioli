@@ -1,11 +1,13 @@
 """Pacioli — FastAPI backend with human-in-the-loop approval."""
 
 import asyncio
+import contextvars
 import logging
 import json
 import re
 import shutil
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -28,12 +30,22 @@ import report_engine
 from models import Proposal, OperationType
 
 # ── Logging ───────────────────────────────────────────────────────
+_request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s [%(request_id)s] %(name)s %(levelname)s %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+# Inject request_id into log format
+class _RequestIdFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = _request_id.get("-")
+        return True
+
+logging.getLogger().addFilter(_RequestIdFilter())
 
 # ── Rate limiting ──────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
@@ -164,11 +176,14 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    rid = uuid.uuid4().hex[:8]
+    _request_id.set(rid)
     t0 = time.time()
     response = await call_next(request)
     ms = (time.time() - t0) * 1000
     logger.info("<%s %s> %d  %.0fms", request.method, request.url.path,
                 response.status_code, ms)
+    response.headers["X-Request-ID"] = rid
     return response
 
 
@@ -395,10 +410,10 @@ def _parse_notes(raw) -> list[str]:
 
 
 @app.get("/api/proposals", summary="List recent proposals")
-async def list_proposals(limit: int = 10,
+async def list_proposals(limit: int = 10, offset: int = 0,
                          _auth: None = Depends(require_auth)):
-    proposals = await db.get_proposals(limit=min(limit, 50))
-    return {"proposals": proposals}
+    proposals, total = await db.get_proposals(limit=min(limit, 50), offset=max(0, offset))
+    return {"proposals": proposals, "total": total}
 
 
 @app.get("/api/proposals/{proposal_id}", response_model=ProposalDetail,
