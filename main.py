@@ -931,10 +931,166 @@ async def delete_rule_endpoint(rule_id: int, _auth: None = Depends(require_auth)
     return {"success": True}
 
 
+# ── Recurring Transactions ────────────────────────────────────
+
+@app.get("/api/recurring", summary="List recurring transactions")
+async def list_recurring(_auth: None = Depends(require_auth)):
+    items = await db.get_recurring()
+    return {"recurring": items}
+
+
+@app.post("/api/recurring", summary="Create recurring transaction")
+async def create_recurring_endpoint(account_id: int, category_id: int, description: str,
+                                     amount: float, tx_type: str, frequency: str,
+                                     next_date: str,
+                                     _auth: None = Depends(require_auth)):
+    rid = await db.create_recurring(account_id, category_id, description, amount, tx_type, frequency, next_date)
+    return {"id": rid}
+
+
+@app.put("/api/recurring/{recurring_id}", summary="Update recurring transaction")
+async def update_recurring_endpoint(recurring_id: int, description: str = None,
+                                     amount: float = None, frequency: str = None,
+                                     next_date: str = None, is_active: int = None,
+                                     category_id: int = None, account_id: int = None,
+                                     _auth: None = Depends(require_auth)):
+    kwargs = {k: v for k, v in {"description": description, "amount": amount,
+              "frequency": frequency, "next_date": next_date, "is_active": is_active,
+              "category_id": category_id, "account_id": account_id}.items() if v is not None}
+    await db.update_recurring(recurring_id, **kwargs)
+    return {"success": True}
+
+
+@app.delete("/api/recurring/{recurring_id}", summary="Deactivate recurring transaction")
+async def delete_recurring_endpoint(recurring_id: int, _auth: None = Depends(require_auth)):
+    await db.delete_recurring(recurring_id)
+    return {"success": True}
+
+
+@app.post("/api/recurring/{recurring_id}/execute", summary="Execute a recurring transaction now")
+async def execute_recurring_endpoint(recurring_id: int, _auth: None = Depends(require_auth)):
+    items = await db.get_recurring()
+    item = None
+    for r in items:
+        if r["id"] == recurring_id:
+            item = r
+            break
+    if not item:
+        raise HTTPException(404, "Recurring transaction not found")
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    await db.insert_transaction(
+        proposal_id=None, account_id=item["account_id"], category_id=item["category_id"],
+        date=today, description=item["description"], amount=item["amount"],
+        tx_type=item["type"],
+    )
+    await db.advance_recurring(recurring_id, item["frequency"], today)
+    return {"success": True, "message": f"Executed: {item['description']}"}
+
+
+# ── Budgets ───────────────────────────────────────────────────
+
+@app.get("/api/budgets", summary="List budgets for a month")
+async def list_budgets(year: int = None, month: int = None,
+                       _auth: None = Depends(require_auth)):
+    if not year or not month:
+        now = datetime.utcnow()
+        year, month = now.year, now.month
+    budgets = await db.get_budget_status(year, month)
+    return {"budgets": budgets, "year": year, "month": month}
+
+
+@app.post("/api/budgets", summary="Set budget for a category")
+async def set_budget_endpoint(category_id: int, amount: float,
+                               year: int = None, month: int = None,
+                               _auth: None = Depends(require_auth)):
+    if not year or not month:
+        now = datetime.utcnow()
+        year, month = now.year, now.month
+    bid = await db.set_budget(category_id, amount, year, month)
+    return {"id": bid}
+
+
+@app.delete("/api/budgets/{budget_id}", summary="Remove a budget")
+async def delete_budget_endpoint(budget_id: int, _auth: None = Depends(require_auth)):
+    await db.delete_budget(budget_id)
+    return {"success": True}
+
+
+# ── Transfers ─────────────────────────────────────────────────
+
+@app.post("/api/transfers", summary="Create a transfer between accounts")
+async def create_transfer_endpoint(from_account_id: int, to_account_id: int,
+                                    amount: float, description: str,
+                                    date: str = None,
+                                    _auth: None = Depends(require_auth)):
+    if from_account_id == to_account_id:
+        raise HTTPException(400, "Cannot transfer to the same account")
+    if amount <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    if not date:
+        date = datetime.utcnow().strftime("%Y-%m-%d")
+    pair_id = await db.create_transfer(from_account_id, to_account_id, amount, description, date)
+    return {"transfer_pair_id": pair_id, "success": True}
+
+
+# ── Export & Backup ───────────────────────────────────────────
+
+@app.get("/api/export/csv", summary="Export all transactions as CSV")
+async def export_transactions_csv(_auth: None = Depends(require_auth)):
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    txs = await db.get_transactions(limit=10000)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Description", "Account", "Category", "Amount", "Type", "Reference"])
+    for tx in txs:
+        writer.writerow([
+            tx.get("date", ""), tx.get("description", ""),
+            tx.get("account_name", ""), tx.get("category_name", ""),
+            tx.get("amount", 0), tx.get("type", ""),
+            tx.get("reference", ""),
+        ])
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=transactions.csv"},
+    )
+
+
+@app.get("/api/export/json", summary="Export all data as JSON")
+async def export_data_json(_auth: None = Depends(require_auth)):
+    from fastapi.responses import JSONResponse
+    accounts = await db.get_accounts()
+    for a in accounts:
+        a["balance"] = await db.get_account_balance(a["id"])
+    categories = await db.get_categories()
+    transactions = await db.get_transactions(limit=10000)
+    rules = await db.get_rules()
+    recurring = await db.get_recurring()
+    return JSONResponse({
+        "accounts": accounts,
+        "categories": categories,
+        "transactions": transactions,
+        "rules": rules,
+        "recurring": recurring,
+    })
+
+
+@app.get("/api/backups", summary="List available backups")
+async def list_backups(_auth: None = Depends(require_auth)):
+    import glob as glob_mod
+    backups = sorted(glob_mod.glob("data/ledger_backup_*.xlsx"), reverse=True)
+    return {"backups": [Path(b).name for b in backups[:config.BACKUP_MAX_COUNT]]}
+
+
+# ── Updated Dashboard with monthly trend ─────────────────────
+
 @app.get("/api/dashboard", summary="Dashboard data")
 async def get_dashboard(_auth: None = Depends(require_auth)):
-    from datetime import datetime as _dt
-    now = _dt.utcnow()
+    now = datetime.utcnow()
     year, month = now.year, now.month
 
     accounts = await db.get_accounts()
@@ -943,13 +1099,30 @@ async def get_dashboard(_auth: None = Depends(require_auth)):
 
     summary = await db.get_monthly_summary(year, month)
     breakdown = await db.get_category_breakdown(year, month)
-
-    # Recent transactions
     recent = await db.get_transactions(limit=10)
 
-    total_expenses = summary["expenses"] or 1  # avoid division by zero
+    total_expenses = summary["expenses"] or 1
     for item in breakdown:
         item["pct"] = round((item["total"] / total_expenses) * 100, 1)
+
+    # Monthly trend (last 6 months)
+    monthly_trend = []
+    for i in range(5, -1, -1):
+        m = month - i
+        y = year
+        while m <= 0:
+            m += 12
+            y -= 1
+        ms = await db.get_monthly_summary(y, m)
+        monthly_trend.append({
+            "month": f"{y}-{m:02d}",
+            "label": datetime(y, m, 1).strftime("%b"),
+            "income": ms["income"],
+            "expenses": ms["expenses"],
+        })
+
+    # Budget status
+    budget_status = await db.get_budget_status(year, month)
 
     return {
         "accounts": accounts,
@@ -961,6 +1134,8 @@ async def get_dashboard(_auth: None = Depends(require_auth)):
         },
         "by_category": breakdown,
         "recent_transactions": recent,
+        "monthly_trend": monthly_trend,
+        "budgets": budget_status,
     }
 
 
