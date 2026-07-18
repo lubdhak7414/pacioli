@@ -1194,72 +1194,6 @@ function downloadReportCSV(reportType) {
   window.open("/api/reports/" + reportType + "/csv", "_blank");
 }
 
-// ── Feature 1: CSV Import ──────────────────────────────────
-function showImportModal() {
-  var existing = document.getElementById("importModal");
-  if (existing) existing.remove();
-  var modal = document.createElement("div");
-  modal.id = "importModal";
-  modal.className = "modal-overlay";
-  modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
-  modal.innerHTML =
-    '<div class="modal-content">' +
-      '<h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Import Bank Transactions</h3>' +
-      '<p class="text-xs mb-3" style="color: var(--text-muted);">Paste CSV with columns: <strong>Date, Description, Amount</strong></p>' +
-      '<textarea id="csvInput" rows="8" class="input-glow w-full rounded-lg px-3 py-2 text-xs font-mono mb-2" ' +
-        'style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary); resize: vertical;" ' +
-        'placeholder="Date,Description,Amount&#10;2025-06-11,Office Supplies,-1200.00&#10;2025-06-12,Client Payment,3500.00" ' +
-        'oninput="validateCSVImport()"></textarea>' +
-      '<div id="csvValidation" class="text-xs mb-3 min-h-[1.2em]"></div>' +
-      '<div class="flex gap-2">' +
-        '<button id="csvImportBtn" onclick="submitCSVImport()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1" disabled>Import & Propose</button>' +
-        '<button onclick="document.getElementById(\'importModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(modal);
-}
-
-function validateCSVImport() {
-  var input = document.getElementById("csvInput");
-  var status = document.getElementById("csvValidation");
-  var btn = document.getElementById("csvImportBtn");
-  if (!input || !status) return;
-  var csv = input.value.trim();
-  if (!csv) {
-    status.innerHTML = '<span style="color: var(--text-muted);">Paste your CSV data above</span>';
-    btn.disabled = true;
-    return;
-  }
-  var lines = csv.split("\n").filter(function(l) { return l.trim(); });
-  var valid = 0, invalid = 0;
-  for (var i = 0; i < lines.length; i++) {
-    var parts = lines[i].split(",").map(function(p) { return p.trim(); });
-    if (parts.length >= 3 && /^\d{4}-\d{2}-\d{2}$/.test(parts[0]) && !isNaN(parseFloat(parts[2]))) {
-      valid++;
-    } else {
-      invalid++;
-    }
-  }
-  if (valid > 0 && invalid === 0) {
-    status.innerHTML = '<span style="color: #16a34a;">&#10003; ' + valid + ' valid transaction(s) ready</span>';
-    btn.disabled = false;
-  } else if (valid > 0) {
-    status.innerHTML = '<span style="color: #d97706;">&#9888; ' + valid + ' valid, ' + invalid + ' invalid row(s) (will be skipped)</span>';
-    btn.disabled = false;
-  } else {
-    status.innerHTML = '<span style="color: #e11d48;">&#10005; No valid rows found. Use format: Date,Description,Amount</span>';
-    btn.disabled = true;
-  }
-}
-
-async function submitCSVImport() {
-  var csv = document.getElementById("csvInput").value.trim();
-  if (!csv) { showToast("Please paste CSV data", "error"); return; }
-  document.getElementById("importModal").remove();
-  chatInput.value = "Import these bank transactions:\n" + csv;
-  chatForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-}
-
 // ── Dashboard ───────────────────────────────────────────────
 async function loadDashboard() {
   var view = document.getElementById("dashboardView");
@@ -1817,6 +1751,304 @@ function renderLineChart(trend) {
   '</svg>';
 }
 
+// ── Tax Tab ─────────────────────────────────────────────────
+async function loadTax() {
+  var view = document.getElementById("taxView");
+  view.innerHTML = '<div class="text-xs py-4" style="color: var(--text-muted);">Loading...</div>';
+  try {
+    var now = new Date();
+    var year = now.getFullYear();
+    var res = await apiFetch("/api/tax/summary?year=" + year);
+    var s = await res.json();
+
+    var tagColors = { "deductible": "var(--success)", "personal": "var(--text-muted)", "business": "#3b82f6", "non-deductible": "var(--danger)", "capital_gains": "#8b5cf6" };
+    var tagLabels = { "deductible": "Deductible", "personal": "Personal", "business": "Business", "non-deductible": "Non-deductible", "capital_gains": "Capital Gains" };
+
+    // Tag breakdown cards
+    var tagCards = Object.entries(s.by_tag || {}).map(function(entry) {
+      var tag = entry[0], info = entry[1];
+      return '<div class="dash-card">' +
+        '<p class="text-xs" style="color: ' + (tagColors[tag] || "var(--text-muted)") + ';">' + (tagLabels[tag] || tag) + '</p>' +
+        '<p class="text-lg font-bold font-mono mt-1">$' + info.total.toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p>' +
+        '<p class="text-xs" style="color: var(--text-muted);">' + info.count + ' transactions</p>' +
+      '</div>';
+    }).join("");
+
+    // Summary
+    var html = '<div class="fade-up">' +
+      '<div class="flex items-center justify-between mb-4">' +
+        '<h3 class="text-sm font-medium" style="color: var(--text-primary);">Tax Report — ' + year + '</h3>' +
+        '<div class="flex gap-2">' +
+          '<button onclick="autoTagTransactions()" class="btn-ghost text-xs px-3 py-1.5 rounded-lg">Auto-tag</button>' +
+          '<a href="/api/tax/export?year=' + year + '" class="btn-ghost text-xs px-3 py-1.5 rounded-lg" style="color: var(--primary);">Export CSV</a>' +
+        '</div>' +
+      '</div>' +
+      // Summary cards
+      '<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">' +
+        '<div class="dash-card"><p class="text-xs" style="color: var(--text-muted);">Total Income</p><p class="text-lg font-bold font-mono" style="color: var(--success);">$' + (s.total_income || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
+        '<div class="dash-card"><p class="text-xs" style="color: var(--text-muted);">Total Deductions</p><p class="text-lg font-bold font-mono" style="color: var(--success);">$' + (s.total_deductible || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
+        '<div class="dash-card"><p class="text-xs" style="color: var(--text-muted);">Business Expenses</p><p class="text-lg font-bold font-mono" style="color: #3b82f6;">$' + (s.total_business || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
+        '<div class="dash-card"><p class="text-xs" style="color: var(--text-muted);">Taxable Income</p><p class="text-lg font-bold font-mono" style="color: var(--danger);">$' + (s.taxable_income || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
+      '</div>' +
+      // Tag breakdown
+      '<div class="mb-6">' +
+        '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">Breakdown by Tax Tag</p>' +
+        (tagCards || '<p class="text-xs" style="color: var(--text-muted);">No tagged transactions. Click Auto-tag to categorize by default rules.</p>') +
+      '</div>' +
+      // Tagged transactions list
+      '<div id="taxTxList" class="text-xs" style="color: var(--text-muted);">Loading transactions...</div>' +
+    '</div>';
+
+    view.innerHTML = html;
+    loadTaxTransactions(year);
+  } catch (err) {
+    view.innerHTML = '<p class="text-sm" style="color: var(--danger);">Failed to load tax report.</p>';
+  }
+}
+
+async function loadTaxTransactions(year) {
+  var list = document.getElementById("taxTxList");
+  if (!list) return;
+  try {
+    var res = await apiFetch("/api/tax/transactions?year=" + year);
+    var data = await res.json();
+    var txs = data.transactions || [];
+    var tagColors = { "deductible": "var(--success)", "personal": "var(--text-muted)", "business": "#3b82f6", "non-deductible": "var(--danger)", "capital_gains": "#8b5cf6" };
+
+    if (txs.length === 0) {
+      list.innerHTML = '<p>No transactions found for ' + year + '.</p>';
+      return;
+    }
+
+    var html = '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">Tagged Transactions (' + txs.length + ')</p>';
+    txs.forEach(function(tx) {
+      var tag = tx.tag || "untagged";
+      var color = tagColors[tag] || "var(--text-muted)";
+      var sign = tx.amount < 0 ? "-" : "+";
+      var amtColor = tx.amount < 0 ? "var(--danger)" : "var(--success)";
+      html += '<div class="flex items-center gap-3 py-2" style="border-bottom: 1px solid var(--border-subtle);">' +
+        '<span style="color: var(--text-muted); min-width: 70px;">' + escHtml(tx.date || "") + '</span>' +
+        '<span class="flex-1 truncate" style="color: var(--text-secondary);">' + escHtml(tx.description || "") + '</span>' +
+        '<span class="text-xs px-1.5 py-0.5 rounded cursor-pointer" style="background: ' + color + '20; color: ' + color + ';" onclick="retagTransaction(' + tx.id + ', \'' + year + '\')">' + escHtml(tag) + '</span>' +
+        '<span class="font-mono font-medium" style="color: ' + amtColor + ';">' + sign + '$' + Math.abs(tx.amount).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</span>' +
+      '</div>';
+    });
+    list.innerHTML = html;
+  } catch (err) {
+    list.innerHTML = '<p style="color: var(--danger);">Failed to load transactions.</p>';
+  }
+}
+
+async function retagTransaction(txId, year) {
+  var tags = ["deductible", "personal", "business", "non-deductible", "capital_gains"];
+  var tag = prompt("Set tax tag:\n" + tags.join(", "));
+  if (!tag || !tags.includes(tag)) return;
+  var res = await apiFetch("/api/tax/tag?transaction_id=" + txId + "&tag=" + tag, { method: "POST" });
+  if (res.ok) { showToast("Tagged as " + tag, "success"); loadTax(); }
+}
+
+async function autoTagTransactions() {
+  var year = new Date().getFullYear();
+  var res = await apiFetch("/api/tax/auto-tag?year=" + year, { method: "POST" });
+  if (res.ok) {
+    var data = await res.json();
+    showToast("Auto-tagged " + data.tagged + " transactions", "success");
+    loadTax();
+  }
+}
+
+// ── CSV Import Wizard ───────────────────────────────────────
+function showImportModal() {
+  var existing = document.getElementById("importModal");
+  if (existing) existing.remove();
+  var modal = document.createElement("div");
+  modal.id = "importModal";
+  modal.className = "modal-overlay";
+  modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+  modal.innerHTML =
+    '<div class="modal-content" style="max-width: 600px;">' +
+      '<h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Import Bank Transactions</h3>' +
+      // Step indicators
+      '<div class="flex gap-2 mb-4 text-xs">' +
+        '<span id="csvStep1" class="px-2 py-1 rounded" style="background: var(--primary); color: white;">1. Paste CSV</span>' +
+        '<span id="csvStep2" class="px-2 py-1 rounded" style="background: var(--surface); color: var(--text-muted);">2. Map Columns</span>' +
+        '<span id="csvStep3" class="px-2 py-1 rounded" style="background: var(--surface); color: var(--text-muted);">3. Import</span>' +
+      '</div>' +
+      // Step 1: Paste CSV
+      '<div id="csvStep1Content">' +
+        '<textarea id="csvInput" rows="8" class="input-glow w-full rounded-lg px-3 py-2 text-xs font-mono mb-2" ' +
+          'style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary); resize: vertical;" ' +
+          'placeholder="Paste CSV data here...\nDate,Description,Amount\n2026-01-15,Starbucks,-12.50\n2026-01-16,Paycheck,3500.00"></textarea>' +
+        '<div id="csvValidation" class="text-xs mb-3 min-h-[1.2em]"></div>' +
+        '<div class="flex gap-2 mb-3">' +
+          '<button onclick="loadCSVProfiles()" class="btn-ghost text-xs px-3 py-1.5 rounded-lg">Load Profile</button>' +
+        '</div>' +
+        '<div class="flex gap-2">' +
+          '<button onclick="csvPreview()" id="csvNextBtn" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1" disabled>Preview & Map</button>' +
+          '<button onclick="document.getElementById(\'importModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button>' +
+        '</div>' +
+      '</div>' +
+      // Step 2: Column mapping (hidden initially)
+      '<div id="csvStep2Content" class="hidden"></div>' +
+      // Step 3: Import confirm (hidden initially)
+      '<div id="csvStep3Content" class="hidden"></div>' +
+    '</div>';
+  document.body.appendChild(modal);
+
+  // Live validation
+  document.getElementById("csvInput").addEventListener("input", function() {
+    var csv = this.value.trim();
+    var status = document.getElementById("csvValidation");
+    var btn = document.getElementById("csvNextBtn");
+    if (!csv) { status.innerHTML = ""; btn.disabled = true; return; }
+    var lines = csv.split("\n").filter(function(l) { return l.trim(); });
+    status.innerHTML = '<span style="color: var(--primary);">' + lines.length + ' row(s) detected</span>';
+    btn.disabled = lines.length < 2;
+  });
+}
+
+async function loadCSVProfiles() {
+  try {
+    var res = await apiFetch("/api/csv/profiles");
+    var data = await res.json();
+    var profiles = data.profiles || [];
+    if (profiles.length === 0) {
+      showToast("No saved profiles", "info");
+      return;
+    }
+    var names = profiles.map(function(p) { return p.name; }).join(", ");
+    var name = prompt("Saved profiles: " + names + "\nEnter profile name to load:");
+    if (!name) return;
+    var profile = profiles.find(function(p) { return p.name === name; });
+    if (!profile) { showToast("Profile not found", "error"); return; }
+    showToast("Profile loaded: " + name, "success");
+  } catch (e) {}
+}
+
+async function csvPreview() {
+  var csv = document.getElementById("csvInput").value.trim();
+  if (!csv) return;
+  try {
+    var res = await apiFetch("/api/csv/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "csv_text=" + encodeURIComponent(csv),
+    });
+    var data = await res.json();
+    if (!data.headers) { showToast("Could not parse CSV", "error"); return; }
+
+    // Show step 2: column mapping
+    document.getElementById("csvStep1Content").classList.add("hidden");
+    document.getElementById("csvStep2Content").classList.remove("hidden");
+    document.getElementById("csvStep1").style.background = "var(--surface)";
+    document.getElementById("csvStep1").style.color = "var(--text-muted)";
+    document.getElementById("csvStep2").style.background = "var(--primary)";
+    document.getElementById("csvStep2").style.color = "white";
+
+    var headerOpts = data.headers.map(function(h, i) { return '<option value="' + i + '">' + escHtml(h) + '</option>'; }).join("");
+
+    // Preview table
+    var previewHtml = '<table class="w-full text-xs border-collapse mb-3"><thead><tr>';
+    data.headers.forEach(function(h) { previewHtml += '<th class="text-left px-2 py-1 border-b" style="color: var(--text-muted);">' + escHtml(h) + '</th>'; });
+    previewHtml += '</tr></thead><tbody>';
+    (data.preview || []).forEach(function(row) {
+      previewHtml += '<tr>';
+      row.forEach(function(cell) { previewHtml += '<td class="px-2 py-1 border-b" style="color: var(--text-secondary);">' + escHtml(cell) + '</td>'; });
+      previewHtml += '</tr>';
+    });
+    previewHtml += '</tbody></table>';
+
+    document.getElementById("csvStep2Content").innerHTML =
+      '<p class="text-xs mb-3" style="color: var(--text-muted);">Map CSV columns to transaction fields:</p>' +
+      previewHtml +
+      '<div class="grid grid-cols-2 gap-3 mb-3">' +
+        '<div><label class="text-xs block mb-1" style="color: var(--text-muted);">Date column</label>' +
+          '<select id="csvDateCol" class="w-full rounded-lg px-3 py-2 text-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);">' + headerOpts + '</select></div>' +
+        '<div><label class="text-xs block mb-1" style="color: var(--text-muted);">Description column</label>' +
+          '<select id="csvDescCol" class="w-full rounded-lg px-3 py-2 text-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);">' + headerOpts + '</select></div>' +
+        '<div><label class="text-xs block mb-1" style="color: var(--text-muted);">Amount column</label>' +
+          '<select id="csvAmountCol" class="w-full rounded-lg px-3 py-2 text-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);">' + headerOpts + '</select></div>' +
+        '<div><label class="text-xs block mb-1" style="color: var(--text-muted);">Date format</label>' +
+          '<select id="csvDateFormat" class="w-full rounded-lg px-3 py-2 text-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);">' +
+            '<option value="YYYY-MM-DD">YYYY-MM-DD</option><option value="MM/DD/YYYY">MM/DD/YYYY</option><option value="DD/MM/YYYY">DD/MM/YYYY</option></select></div>' +
+      '</div>' +
+      '<div class="grid grid-cols-2 gap-3 mb-3">' +
+        '<div><label class="text-xs block mb-1" style="color: var(--text-muted);">Amount sign</label>' +
+          '<select id="csvAmountSign" class="w-full rounded-lg px-3 py-2 text-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);">' +
+            '<option value="positive">Expenses are negative</option><option value="absolute">All amounts positive (auto-detect)</option></select></div>' +
+        '<div><label class="text-xs block mb-1" style="color: var(--text-muted);">Import to account</label>' +
+          '<select id="csvAccount" class="w-full rounded-lg px-3 py-2 text-sm" style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);"></select></div>' +
+      '</div>' +
+      '<div class="flex gap-2">' +
+        '<button onclick="csvImport()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1">Import ' + data.total_rows + ' rows</button>' +
+        '<button onclick="document.getElementById(\'importModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button>' +
+      '</div>';
+
+    // Load accounts for dropdown
+    var accRes = await apiFetch("/api/accounts");
+    var accData = await accRes.json();
+    var accSel = document.getElementById("csvAccount");
+    (accData.accounts || []).forEach(function(a) {
+      var opt = document.createElement("option");
+      opt.value = a.id;
+      opt.textContent = a.name;
+      accSel.appendChild(opt);
+    });
+
+    // Auto-select likely columns
+    var dateIdx = data.headers.findIndex(function(h) { return /date/i.test(h); });
+    var descIdx = data.headers.findIndex(function(h) { return /desc|memo|payee|name/i.test(h); });
+    var amtIdx = data.headers.findIndex(function(h) { return /amount|debit|credit|total/i.test(h); });
+    if (dateIdx >= 0) document.getElementById("csvDateCol").value = dateIdx;
+    if (descIdx >= 0) document.getElementById("csvDescCol").value = descIdx;
+    if (amtIdx >= 0) document.getElementById("csvAmountCol").value = amtIdx;
+
+  } catch (e) { showToast("Failed to parse CSV", "error"); }
+}
+
+async function csvImport() {
+  var csv = document.getElementById("csvInput").value.trim();
+  var dateCol = parseInt(document.getElementById("csvDateCol").value);
+  var descCol = parseInt(document.getElementById("csvDescCol").value);
+  var amountCol = parseInt(document.getElementById("csvAmountCol").value);
+  var dateFormat = document.getElementById("csvDateFormat").value;
+  var amountSign = document.getElementById("csvAmountSign").value;
+  var accountId = parseInt(document.getElementById("csvAccount").value);
+
+  // Show step 3: importing
+  document.getElementById("csvStep2Content").classList.add("hidden");
+  document.getElementById("csvStep3Content").classList.remove("hidden");
+  document.getElementById("csvStep3Content").innerHTML = '<p class="text-xs py-4" style="color: var(--text-muted);">Importing...</p>';
+  document.getElementById("csvStep2").style.background = "var(--surface)";
+  document.getElementById("csvStep2").style.color = "var(--text-muted)";
+  document.getElementById("csvStep3").style.background = "var(--primary)";
+  document.getElementById("csvStep3").style.color = "white";
+
+  try {
+    var params = "csv_text=" + encodeURIComponent(csv) +
+      "&date_col=" + dateCol + "&desc_col=" + descCol + "&amount_col=" + amountCol +
+      "&date_format=" + dateFormat + "&amount_positive=" + amountSign +
+      "&account_id=" + accountId;
+    var res = await apiFetch("/api/csv/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params,
+    });
+    var data = await res.json();
+    document.getElementById("importModal").remove();
+    if (data.success) {
+      showToast("Imported " + data.imported + " transactions" + (data.skipped > 0 ? ", skipped " + data.skipped : ""), "success");
+      loadDashboard();
+      loadTransactions();
+    } else {
+      showToast(data.message || "Import failed", "error");
+    }
+  } catch (e) {
+    showToast("Import failed", "error");
+    document.getElementById("importModal").remove();
+  }
+}
+
 // ── Audit Trail Tab ─────────────────────────────────────────
 async function loadAuditTrail() {
   var view = document.getElementById("auditView");
@@ -1873,8 +2105,8 @@ async function loadAuditTrail() {
 }
 
 // ── Extended Tabs ───────────────────────────────────────────
-var _allTabIds = ["tabDashboard", "tabProposal", "tabRecurring", "tabBudgets", "tabTransactions", "tabAccounts", "tabCategories", "tabLedger", "tabAudit"];
-var _allViewIds = ["dashboardView", "proposalView", "recurringView", "budgetsView", "transactionView", "accountsView", "categoriesView", "ledgerView", "auditView"];
+var _allTabIds = ["tabDashboard", "tabProposal", "tabRecurring", "tabBudgets", "tabTransactions", "tabTax", "tabAccounts", "tabCategories", "tabLedger", "tabAudit"];
+var _allViewIds = ["dashboardView", "proposalView", "recurringView", "budgetsView", "transactionView", "taxView", "accountsView", "categoriesView", "ledgerView", "auditView"];
 var _idleClass = "px-4 py-3 font-medium border-b-2 border-transparent transition";
 var _activeClass = "tab-active px-4 py-3 font-medium transition";
 
@@ -1905,6 +2137,7 @@ switchTab = function(tab) {
   else if (tab === "categories") loadCategories();
   else if (tab === "recurring") loadRecurring();
   else if (tab === "budgets") loadBudgets();
+  else if (tab === "tax") loadTax();
   else if (tab === "audit") loadAuditTrail();
 };
 
