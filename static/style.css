@@ -26,6 +26,39 @@
   --transition-base: 0.2s ease;
 }
 
+/* ── Dark Mode ─────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --surface-hover: #334155;
+  --card: #1e293b;
+  --border: #334155;
+  --border-subtle: #1e293b;
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted: #64748b;
+  --primary: #14b8a6;
+  --primary-hover: #0d9488;
+  --primary-light: rgba(20,184,166,0.12);
+  --primary-border: rgba(20,184,166,0.3);
+  --success: #22c55e;
+  --success-light: rgba(34,197,94,0.12);
+  --danger: #f43f5e;
+  --danger-light: rgba(244,63,94,0.12);
+  --warning: #f59e0b;
+}
+[data-theme="dark"] body { background: var(--bg); color: var(--text-primary); }
+[data-theme="dark"] .glass { background: rgba(15,23,42,0.8); }
+[data-theme="dark"] .bubble-assistant { background: var(--surface); color: var(--text-primary); }
+[data-theme="dark"] .bubble-user { background: var(--primary); color: white; }
+[data-theme="dark"] .modal-content { background: var(--card); border-color: var(--border); }
+[data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea {
+  background: var(--surface) !important; color: var(--text-primary) !important; border-color: var(--border) !important;
+}
+[data-theme="dark"] table th { background: var(--surface) !important; }
+[data-theme="dark"] .toast { color: white; }
+
+
 /* ── Base ─────────────────────────────────────────────── */
 body { font-family: "Inter", sans-serif; line-height: 1.6; }
 .font-mono { font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
@@ -462,6 +495,48 @@ svg text {
   font-weight: 600;
   border-top: 2px solid var(--border);
   background: var(--surface);
+}
+
+
+/* ── Reminder Cards ────────────────────────────────────── */
+.reminder-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warning);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+.reminder-card.urgent {
+  border-left-color: var(--danger);
+}
+.reminder-card.completed {
+  opacity: 0.5;
+  border-left-color: var(--success);
+}
+
+/* ── Dark Mode Toggle ──────────────────────────────────── */
+.theme-toggle {
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 0.375rem;
+  transition: background 0.2s;
+}
+.theme-toggle:hover { background: var(--surface); }
+
+/* ── Search Filters ────────────────────────────────────── */
+.search-bar {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.search-bar input, .search-bar select {
+  font-size: 0.75rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
 }
 
 /* ── Mobile ───────────────────────────────────────────── */

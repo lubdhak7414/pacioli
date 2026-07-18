@@ -13,6 +13,10 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/static/style.css" />
+    <link rel="manifest" href="/static/manifest.json" />
+    <meta name="theme-color" content="#0d9488" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <script>
       tailwind.config = {
         theme: {
@@ -65,6 +69,7 @@
             <a href="/api/reports/balance-sheet/csv" class="block px-3 py-1.5 text-xs hover:bg-gray-50" style="color: var(--text-secondary);">Balance Sheet (.csv)</a>
           </div>
         </div>
+        <button id="themeToggle" onclick="toggleTheme()" class="theme-toggle text-sm" title="Toggle dark mode">&#9789;</button>
         <button id="helpBtn" onclick="showExamples()" title="Show example prompts" class="btn-ghost text-xs rounded-lg px-2.5 py-1.5">?</button>
         <span id="healthDot" title="System health" class="w-2.5 h-2.5 rounded-full bg-gray-600 health-pulse"></span>
       </div>

@@ -98,6 +98,24 @@ function submitAuthKey() {
   showToast("Connected", "success");
   checkHealth();
 }
+// ── Dark Mode ──────────────────────────────────────────────
+function toggleTheme() {
+  var current = document.documentElement.getAttribute("data-theme");
+  var next = current === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem("pacioli_theme", next);
+  document.getElementById("themeToggle").innerHTML = next === "dark" ? "&#9728;" : "&#9789;";
+}
+(function() {
+  var saved = localStorage.getItem("pacioli_theme") || "light";
+  document.documentElement.setAttribute("data-theme", saved);
+  var btn = document.getElementById("themeToggle");
+  if (btn) btn.innerHTML = saved === "dark" ? "&#9728;" : "&#9789;";
+})();
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/static/sw.js").catch(function() {});
+}
+
 
 // Check if auth is needed on load
 (async function() {
@@ -1062,40 +1080,41 @@ var txTabLoaded = false;
 
 async function loadTransactions() {
   var view = document.getElementById("transactionView");
-  if (!view) return;
-  view.innerHTML = '<div class="flex items-center gap-2 text-xs text-gray-600 py-4">' +
-    '<span class="typing-dot inline-block w-1.5 h-1.5 bg-gray-500 rounded-full"></span>' +
-    '<span class="ml-1">Loading transactions...</span></div>';
-  try {
-    var res = await apiFetch("/api/transactions?limit=50");
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    var data = await res.json();
-    var txs = data.transactions || [];
-    if (txs.length === 0) {
-      view.innerHTML = '<div class="text-center py-12 text-gray-600">' +
-        '<div class="empty-state-icon mb-3">&#128203;</div>' +
-        '<p class="font-medium">No transactions yet</p>' +
-        '<p class="text-xs mt-1 text-gray-700 mb-4">Transactions are created when you approve a proposal</p>' +
-        '<button onclick="handleAction(\'Record a $ expense for \')" class="btn-ghost text-xs px-4 py-2 rounded-lg">Record your first transaction</button>' +
-        '</div>';
-      return;
-    }
-    var html = '<div class="tx-header"><span>Date</span><span>Description</span><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>';
-    txs.forEach(function(tx) {
-      var debit = tx.debit && tx.debit !== "0" ? tx.debit : "";
-      var credit = tx.credit && tx.credit !== "0" ? tx.credit : "";
-      html += '<div class="tx-row">' +
-        '<span class="tx-date">' + escHtml(tx.date || "") + '</span>' +
-        '<span class="tx-desc">' + escHtml(tx.description || tx.user_message || "") + '</span>' +
-        '<span class="tx-acct">' + escHtml(tx.account || "") + '</span>' +
-        '<span class="tx-debit">' + (debit ? "$" + escHtml(debit) : "") + '</span>' +
-        '<span class="tx-credit">' + (credit ? "$" + escHtml(credit) : "") + '</span>' +
-      '</div>';
-    });
-    view.innerHTML = html;
-  } catch (err) {
-    view.innerHTML = '<p class="text-sm" style="color: #ef4444;">Failed to load transactions.</p>';
-  }
+  var searchHtml = '<div class="search-bar mb-4">' +
+    '<input type="text" id="txSearch" placeholder="Search..." oninput="filterTransactions()" style="flex:1;min-width:120px;" />' +
+    '<input type="date" id="txFromDate" onchange="filterTransactions()" title="From" />' +
+    '<input type="date" id="txToDate" onchange="filterTransactions()" title="To" />' +
+    '<select id="txAccountFilter" onchange="filterTransactions()"><option value="">All accounts</option></select>' +
+  '</div><div id="txList"></div>';
+  view.innerHTML = searchHtml;
+  apiFetch("/api/accounts").then(function(r){return r.json()}).then(function(d){
+    var sel = document.getElementById("txAccountFilter");
+    (d.accounts||[]).forEach(function(a){var o=document.createElement("option");o.value=a.id;o.textContent=a.name;sel.appendChild(o);});
+  });
+  filterTransactions();
+}
+async function filterTransactions() {
+  var q=(document.getElementById("txSearch")||{}).value||"";
+  var from=(document.getElementById("txFromDate")||{}).value||"";
+  var to=(document.getElementById("txToDate")||{}).value||"";
+  var acc=(document.getElementById("txAccountFilter")||{}).value||"";
+  var params="limit=50";
+  if(q)params+="&q="+encodeURIComponent(q);if(from)params+="&from_date="+from;
+  if(to)params+="&to_date="+to;if(acc)params+="&account_id="+acc;
+  var res=await apiFetch("/api/transactions/search?"+params);
+  var data=await res.json();var txs=data.transactions||[];
+  var list=document.getElementById("txList");if(!list)return;
+  if(txs.length===0){list.innerHTML='<p class="text-xs py-4" style="color:var(--text-muted);">No transactions found.</p>';return;}
+  var html='<div class="text-xs mb-2" style="color:var(--text-muted);">'+txs.length+' transaction(s)</div>';
+  txs.forEach(function(tx){
+    var sign=tx.amount<0?"-":"+";var color=tx.amount<0?"var(--danger)":"var(--success)";
+    html+='<div class="flex items-center gap-3 text-xs py-2" style="border-bottom:1px solid var(--border-subtle);">'+
+      '<span style="color:var(--text-muted);min-width:70px;">'+escHtml(tx.date||"")+'</span>'+
+      '<span class="flex-1 truncate" style="color:var(--text-secondary);">'+escHtml(tx.description||"")+'</span>'+
+      '<span class="text-xs px-1.5 py-0.5 rounded" style="background:var(--surface);color:var(--text-muted);">'+escHtml(tx.category_icon||"")+' '+escHtml(tx.category_name||"—")+'</span>'+
+      '<span class="font-mono font-medium" style="color:'+color+';">'+sign+'\u0024'+Math.abs(tx.amount).toLocaleString(undefined,{minimumFractionDigits:2})+'</span></div>';
+  });
+  list.innerHTML=html;
 }
 
 // ── Interactive Report Rendering ─────────────────────────────
@@ -1203,119 +1222,84 @@ async function loadDashboard() {
     if (!res.ok) throw new Error("HTTP " + res.status);
     var d = await res.json();
 
-    // Account cards with transfer button
     var accountsHtml = (d.accounts || []).map(function(a) {
       var color = a.balance >= 0 ? "var(--success)" : "var(--danger)";
-      return '<div class="dash-card">' +
-        '<p class="text-xs" style="color: var(--text-muted);">' + escHtml(a.name) + '</p>' +
-        '<p class="text-lg font-bold font-mono mt-1" style="color: ' + color + ';">$' + Math.abs(a.balance).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p>' +
-        '<p class="text-xs mt-0.5" style="color: var(--text-muted);">' + escHtml(a.type) + '</p>' +
-      '</div>';
+      return '<div class="dash-card"><p class="text-xs" style="color:var(--text-muted);">' + escHtml(a.name) + '</p>' +
+        '<p class="text-lg font-bold font-mono mt-1" style="color:' + color + ';">$' + Math.abs(a.balance).toLocaleString(undefined,{minimumFractionDigits:2}) + '</p>' +
+        '<p class="text-xs mt-0.5" style="color:var(--text-muted);">' + escHtml(a.type) + '</p></div>';
     }).join("");
     if (d.accounts && d.accounts.length >= 2) {
-      accountsHtml += '<div class="dash-card flex items-center justify-center cursor-pointer" onclick="showTransferModal()" style="border-style: dashed;">' +
-        '<p class="text-sm font-medium" style="color: var(--primary);">🔄 Transfer</p></div>';
+      accountsHtml += '<div class="dash-card flex items-center justify-center cursor-pointer" onclick="showTransferModal()" style="border-style:dashed;"><p class="text-sm font-medium" style="color:var(--primary);">\u{1F504} Transfer</p></div>';
     }
 
-    // Summary + donut chart
     var s = d.summary || {};
     var netColor = (s.net || 0) >= 0 ? "var(--success)" : "var(--danger)";
     var donutHtml = renderDonutChart(s.total_income || 0, s.total_expenses || 0);
-
-    // Monthly trend line chart
     var trendHtml = renderLineChart(d.monthly_trend || []);
 
-    // Category chart
     var cats = d.by_category || [];
     var maxAmt = cats.length > 0 ? cats[0].total : 1;
     var catHtml = cats.map(function(c) {
       var pct = (c.total / maxAmt) * 100;
       return '<div class="flex items-center gap-2 text-xs mb-2">' +
-        '<span class="w-24 truncate" style="color: var(--text-secondary);">' + escHtml(c.icon || "") + ' ' + escHtml(c.name || "Uncategorized") + '</span>' +
-        '<div class="flex-1 h-4 rounded" style="background: var(--surface);">' +
-          '<div class="h-4 rounded" style="width: ' + pct + '%; background: var(--primary);"></div>' +
-        '</div>' +
-        '<span class="w-16 text-right font-mono" style="color: var(--text-secondary);">$' + c.total.toLocaleString(undefined, {minimumFractionDigits: 0}) + '</span>' +
-        '<span class="w-10 text-right" style="color: var(--text-muted);">' + (c.pct || 0) + '%</span>' +
-      '</div>';
+        '<span class="w-24 truncate" style="color:var(--text-secondary);">' + escHtml(c.icon||"") + ' ' + escHtml(c.name||"Uncategorized") + '</span>' +
+        '<div class="flex-1 h-4 rounded" style="background:var(--surface);"><div class="h-4 rounded" style="width:' + pct + '%;background:var(--primary);"></div></div>' +
+        '<span class="w-16 text-right font-mono" style="color:var(--text-secondary);">$' + c.total.toLocaleString(undefined,{minimumFractionDigits:0}) + '</span>' +
+        '<span class="w-10 text-right" style="color:var(--text-muted);">' + (c.pct||0) + '%</span></div>';
     }).join("");
 
-    // Budget progress
     var budgets = d.budgets || [];
     var budgetHtml = budgets.map(function(b) {
       var pct = b.pct || 0;
       var barColor = pct > 100 ? "var(--danger)" : pct > 80 ? "var(--warning)" : "var(--success)";
       return '<div class="flex items-center gap-2 text-xs mb-2">' +
-        '<span class="w-20 truncate" style="color: var(--text-secondary);">' + escHtml(b.category_icon || "") + ' ' + escHtml(b.category_name || "") + '</span>' +
-        '<div class="flex-1 h-2 rounded" style="background: var(--surface);">' +
-          '<div class="h-2 rounded" style="width: ' + Math.min(pct, 100) + '%; background: ' + barColor + ';"></div>' +
-        '</div>' +
-        '<span class="w-12 text-right font-mono" style="color: ' + barColor + ';">' + pct + '%</span>' +
-      '</div>';
+        '<span class="w-20 truncate" style="color:var(--text-secondary);">' + escHtml(b.category_icon||"") + ' ' + escHtml(b.category_name||"") + '</span>' +
+        '<div class="flex-1 h-2 rounded" style="background:var(--surface);"><div class="h-2 rounded" style="width:' + Math.min(pct,100) + '%;background:' + barColor + ';"></div></div>' +
+        '<span class="w-12 text-right font-mono" style="color:' + barColor + ';">' + pct + '%</span></div>';
     }).join("");
 
-    // Recent transactions
+    var reminders = d.reminders || [];
+    var reminderHtml = reminders.slice(0, 5).map(function(r) {
+      var tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      var isUrgent = r.due_date <= tomorrow;
+      return '<div class="reminder-card ' + (isUrgent ? "urgent" : "") + ' flex items-center justify-between mb-2">' +
+        '<div><p class="text-xs font-medium" style="color:var(--text-primary);">' + escHtml(r.title) + '</p>' +
+        '<p class="text-xs" style="color:var(--text-muted);">Due: ' + escHtml(r.due_date) + (r.amount ? ' \u0024' + r.amount.toLocaleString(undefined,{minimumFractionDigits:2}) : '') + '</p></div>' +
+        '<button onclick="completeReminder(' + r.id + ')" class="text-xs px-2 py-1 rounded" style="color:var(--success);">&#10003;</button></div>';
+    }).join("");
+
     var txHtml = (d.recent_transactions || []).map(function(tx) {
       var sign = tx.amount < 0 ? "-" : "+";
       var color = tx.amount < 0 ? "var(--danger)" : "var(--success)";
-      return '<div class="flex items-center gap-3 text-xs py-2" style="border-bottom: 1px solid var(--border-subtle);">' +
-        '<span style="color: var(--text-muted); min-width: 70px;">' + escHtml(tx.date || "") + '</span>' +
-        '<span class="flex-1 truncate" style="color: var(--text-secondary);">' + escHtml(tx.description || tx.category_name || "") + '</span>' +
-        '<span class="text-xs px-1.5 py-0.5 rounded" style="background: var(--surface); color: var(--text-muted);">' + escHtml(tx.category_icon || "") + ' ' + escHtml(tx.category_name || "—") + '</span>' +
-        '<span class="font-mono font-medium" style="color: ' + color + ';">' + sign + '$' + Math.abs(tx.amount).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</span>' +
-      '</div>';
+      return '<div class="flex items-center gap-3 text-xs py-2" style="border-bottom:1px solid var(--border-subtle);">' +
+        '<span style="color:var(--text-muted);min-width:70px;">' + escHtml(tx.date||"") + '</span>' +
+        '<span class="flex-1 truncate" style="color:var(--text-secondary);">' + escHtml(tx.description||tx.category_name||"") + '</span>' +
+        '<span class="text-xs px-1.5 py-0.5 rounded" style="background:var(--surface);color:var(--text-muted);">' + escHtml(tx.category_icon||"") + ' ' + escHtml(tx.category_name||"—") + '</span>' +
+        '<span class="font-mono font-medium" style="color:' + color + ';">' + sign + '\u0024' + Math.abs(tx.amount).toLocaleString(undefined,{minimumFractionDigits:2}) + '</span></div>';
     }).join("");
 
     view.innerHTML =
       '<div class="fade-up">' +
-        // Account cards + transfer
         '<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-6">' + accountsHtml + '</div>' +
-        // Summary row: donut + income/expenses + trend
         '<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">' +
-          '<div class="dash-card flex flex-col items-center">' +
-            '<p class="text-xs font-medium mb-2" style="color: var(--text-muted);">' + escHtml(s.period || "This Month") + '</p>' +
-            donutHtml +
-            '<div class="flex gap-4 mt-2 text-xs">' +
-              '<span style="color: var(--success);">● Income</span>' +
-              '<span style="color: var(--danger);">● Expenses</span>' +
-            '</div>' +
-          '</div>' +
-          '<div class="dash-card">' +
-            '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">Income vs Expenses</p>' +
-            '<div class="space-y-2">' +
-              '<div><p class="text-xs" style="color: var(--text-muted);">Income</p><p class="text-lg font-bold font-mono" style="color: var(--success);">$' + (s.total_income || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
-              '<div><p class="text-xs" style="color: var(--text-muted);">Expenses</p><p class="text-lg font-bold font-mono" style="color: var(--danger);">$' + (s.total_expenses || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
-              '<div><p class="text-xs" style="color: var(--text-muted);">Net</p><p class="text-lg font-bold font-mono" style="color: ' + netColor + ';">$' + (s.net || 0).toLocaleString(undefined, {minimumFractionDigits: 2}) + '</p></div>' +
-            '</div>' +
-          '</div>' +
-          '<div class="dash-card">' +
-            '<p class="text-xs font-medium mb-2" style="color: var(--text-muted);">6-Month Trend</p>' +
-            trendHtml +
-            '<div class="flex gap-3 mt-1 text-xs">' +
-              '<span style="color: var(--success);">● Income</span>' +
-              '<span style="color: var(--danger);">● Expenses</span>' +
-            '</div>' +
-          '</div>' +
+          '<div class="dash-card flex flex-col items-center"><p class="text-xs font-medium mb-2" style="color:var(--text-muted);">' + escHtml(s.period||"This Month") + '</p>' + donutHtml +
+            '<div class="flex gap-4 mt-2 text-xs"><span style="color:var(--success);">\u25CF Income</span><span style="color:var(--danger);">\u25CF Expenses</span></div></div>' +
+          '<div class="dash-card"><p class="text-xs font-medium mb-3" style="color:var(--text-muted);">Income vs Expenses</p><div class="space-y-2">' +
+            '<div><p class="text-xs" style="color:var(--text-muted);">Income</p><p class="text-lg font-bold font-mono" style="color:var(--success);">$' + (s.total_income||0).toLocaleString(undefined,{minimumFractionDigits:2}) + '</p></div>' +
+            '<div><p class="text-xs" style="color:var(--text-muted);">Expenses</p><p class="text-lg font-bold font-mono" style="color:var(--danger);">$' + (s.total_expenses||0).toLocaleString(undefined,{minimumFractionDigits:2}) + '</p></div>' +
+            '<div><p class="text-xs" style="color:var(--text-muted);">Net</p><p class="text-lg font-bold font-mono" style="color:' + netColor + ';">$' + (s.net||0).toLocaleString(undefined,{minimumFractionDigits:2}) + '</p></div></div></div>' +
+          '<div class="dash-card"><p class="text-xs font-medium mb-2" style="color:var(--text-muted);">6-Month Trend</p>' + trendHtml +
+            '<div class="flex gap-3 mt-1 text-xs"><span style="color:var(--success);">\u25CF Income</span><span style="color:var(--danger);">\u25CF Expenses</span></div></div>' +
         '</div>' +
-        // Category + Budget row
         '<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">' +
-          '<div class="dash-card">' +
-            '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">Spending by Category</p>' +
-            (catHtml || '<p class="text-xs" style="color: var(--text-muted);">No expenses this month</p>') +
-          '</div>' +
-          '<div class="dash-card">' +
-            '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">Budget Progress</p>' +
-            (budgetHtml || '<p class="text-xs" style="color: var(--text-muted);">No budgets set. Go to Budgets tab to create one.</p>') +
-          '</div>' +
+          '<div class="dash-card"><p class="text-xs font-medium mb-3" style="color:var(--text-muted);">Spending by Category</p>' + (catHtml || '<p class="text-xs" style="color:var(--text-muted);">No expenses this month</p>') + '</div>' +
+          '<div class="dash-card"><p class="text-xs font-medium mb-3" style="color:var(--text-muted);">Budget Progress</p>' + (budgetHtml || '<p class="text-xs" style="color:var(--text-muted);">No budgets set.</p>') + '</div>' +
         '</div>' +
-        // Recent transactions
-        '<div class="dash-card">' +
-          '<p class="text-xs font-medium mb-3" style="color: var(--text-muted);">Recent Transactions</p>' +
-          (txHtml || '<p class="text-xs" style="color: var(--text-muted);">No transactions yet</p>') +
-        '</div>' +
+        (reminderHtml ? '<div class="dash-card mb-4"><p class="text-xs font-medium mb-3" style="color:var(--text-muted);">Upcoming Bills</p>' + reminderHtml + '</div>' : '') +
+        '<div class="dash-card"><p class="text-xs font-medium mb-3" style="color:var(--text-muted);">Recent Transactions</p>' + (txHtml || '<p class="text-xs" style="color:var(--text-muted);">No transactions yet</p>') + '</div>' +
       '</div>';
   } catch (err) {
-    view.innerHTML = '<p class="text-sm" style="color: var(--danger);">Failed to load dashboard.</p>';
+    view.innerHTML = '<p class="text-sm" style="color:var(--danger);">Failed to load dashboard.</p>';
   }
 }
 
@@ -1430,7 +1414,14 @@ async function loadCategories() {
     view.innerHTML = html;
   } catch (err) {
     view.innerHTML = '<p class="text-sm" style="color: var(--danger);">Failed to load categories.</p>';
-  }
+  
+    // Rules section
+    html += '<div class="mt-6"><div class="flex items-center justify-between mb-3">' +
+      '<h3 class="text-sm font-medium" style="color:var(--text-primary);">Categorization Rules</h3>' +
+      '<button onclick="showAddRuleModal()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">+ Add Rule</button></div>' +
+      '<div id="rulesList">Loading...</div></div>';
+    view.innerHTML = html;
+    loadRules();}
 }
 
 function showAddCategoryModal() {
@@ -2047,6 +2038,57 @@ async function csvImport() {
     showToast("Import failed", "error");
     document.getElementById("importModal").remove();
   }
+}
+
+
+// ── Reminders ──────────────────────────────────────────────
+async function completeReminder(id) {
+  var res = await apiFetch("/api/reminders/" + id + "/complete", { method: "PUT" });
+  if (res.ok) { showToast("Reminder completed", "success"); loadDashboard(); }
+}
+
+
+// ── Rules Management ───────────────────────────────────────
+async function loadRules() {
+  var list = document.getElementById("rulesList"); if (!list) return;
+  try {
+    var res = await apiFetch("/api/rules"); var data = await res.json(); var rules = data.rules || [];
+    if (rules.length === 0) { list.innerHTML = '<p class="text-xs" style="color:var(--text-muted);">No rules yet.</p>'; return; }
+    var html = '';
+    rules.forEach(function(r) {
+      html += '<div class="dash-card flex items-center justify-between mb-2"><div>'+
+        '<span class="text-xs font-mono px-2 py-0.5 rounded" style="background:var(--surface);color:var(--text-secondary);">"'+escHtml(r.pattern)+'"</span>'+
+        '<span class="text-xs ml-2" style="color:var(--text-muted);">\u2192 '+escHtml(r.category_icon||"")+' '+escHtml(r.category_name||"?")+'</span>'+
+        '<span class="text-xs ml-2" style="color:var(--text-muted);">('+r.use_count+' uses)</span></div>'+
+        '<button onclick="deleteRule('+r.id+')" class="text-xs px-2 py-1 rounded" style="color:var(--danger);">Delete</button></div>';
+    });
+    list.innerHTML = html;
+  } catch(e) { list.innerHTML = '<p class="text-xs" style="color:var(--danger);">Failed to load rules.</p>'; }
+}
+function showAddRuleModal() {
+  apiFetch("/api/categories").then(function(r){return r.json()}).then(function(data){
+    var cats=data.categories||[];var opts=cats.map(function(c){return '<option value="'+c.id+'">'+escHtml(c.icon||"")+' '+escHtml(c.name)+'</option>';}).join("");
+    var m=document.createElement("div");m.id="addRuleModal";m.className="modal-overlay";
+    m.onclick=function(e){if(e.target===m)m.remove();};
+    m.innerHTML='<div class="modal-content"><h3 class="text-sm font-semibold mb-3" style="color:var(--text-primary);">Add Rule</h3>'+
+      '<input id="rulePattern" type="text" class="input-glow w-full rounded-lg px-3 py-2 text-sm mb-3" style="background:var(--surface);border:1px solid var(--border);color:var(--text-primary);" placeholder="Merchant pattern (e.g. starbucks)"/>'+
+      '<select id="ruleCategory" class="w-full rounded-lg px-3 py-2 text-sm mb-3" style="background:var(--surface);border:1px solid var(--border);color:var(--text-primary);">'+opts+'</select>'+
+      '<div class="flex gap-2"><button onclick="submitAddRule()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1">Add</button>'+
+      '<button onclick="document.getElementById(\'addRuleModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button></div></div>';
+    document.body.appendChild(m);
+  });
+}
+async function submitAddRule() {
+  var p=document.getElementById("rulePattern").value.trim();var c=document.getElementById("ruleCategory").value;
+  if(!p){showToast("Enter a pattern","error");return;}
+  document.getElementById("addRuleModal").remove();
+  var res=await apiFetch("/api/rules?pattern="+encodeURIComponent(p)+"&category_id="+c,{method:"POST"});
+  if(res.ok){showToast("Rule added","success");loadRules();}
+}
+async function deleteRule(id) {
+  if(!confirm("Delete this rule?"))return;
+  var res=await apiFetch("/api/rules/"+id,{method:"DELETE"});
+  if(res.ok){showToast("Rule deleted","success");loadRules();}
 }
 
 // ── Audit Trail Tab ─────────────────────────────────────────
