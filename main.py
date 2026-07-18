@@ -925,6 +925,23 @@ async def create_rule_endpoint(pattern: str, category_id: int, account_id: int =
     return {"id": rule_id}
 
 
+@app.put("/api/rules/{rule_id}", summary="Update a rule")
+async def update_rule_endpoint(rule_id: int, pattern: str = None, category_id: int = None,
+                                _auth: None = Depends(require_auth)):
+    async with db._conn() as conn:
+        fields, vals = [], []
+        if pattern is not None:
+            fields.append("pattern = ?")
+            vals.append(pattern.lower())
+        if category_id is not None:
+            fields.append("category_id = ?")
+            vals.append(category_id)
+        if fields:
+            vals.append(rule_id)
+            await conn.execute(f"UPDATE categorization_rules SET {', '.join(fields)} WHERE id = ?", vals)
+    return {"success": True}
+
+
 @app.delete("/api/rules/{rule_id}", summary="Delete a rule")
 async def delete_rule_endpoint(rule_id: int, _auth: None = Depends(require_auth)):
     await db.delete_rule(rule_id)
@@ -1086,6 +1103,40 @@ async def list_backups(_auth: None = Depends(require_auth)):
     return {"backups": [Path(b).name for b in backups[:config.BACKUP_MAX_COUNT]]}
 
 
+# ── Reminders ────────────────────────────────────────────────
+
+@app.get("/api/reminders", summary="List upcoming reminders")
+async def list_reminders(_auth: None = Depends(require_auth)):
+    reminders = await db.get_reminders()
+    return {"reminders": reminders}
+
+
+@app.post("/api/reminders", summary="Create a reminder")
+async def create_reminder_endpoint(title: str, due_date: str, amount: float = None,
+                                    recurring_id: int = None, notify_days: int = 3,
+                                    _auth: None = Depends(require_auth)):
+    rid = await db.create_reminder(title, due_date, amount, recurring_id, notify_days)
+    return {"id": rid}
+
+
+@app.put("/api/reminders/{reminder_id}/complete", summary="Mark reminder complete")
+async def complete_reminder_endpoint(reminder_id: int, _auth: None = Depends(require_auth)):
+    await db.complete_reminder(reminder_id)
+    return {"success": True}
+
+
+@app.delete("/api/reminders/{reminder_id}", summary="Delete reminder")
+async def delete_reminder_endpoint(reminder_id: int, _auth: None = Depends(require_auth)):
+    await db.delete_reminder(reminder_id)
+    return {"success": True}
+
+
+@app.get("/api/reminders/due", summary="Get reminders due soon")
+async def due_reminders(within_days: int = 3, _auth: None = Depends(require_auth)):
+    reminders = await db.get_due_reminders(within_days)
+    return {"reminders": reminders, "count": len(reminders)}
+
+
 # ── Tax-ready Reports ────────────────────────────────────────
 
 @app.get("/api/tax/summary", summary="Annual tax summary")
@@ -1152,6 +1203,19 @@ async def tax_export_csv(year: int = None, _auth: None = Depends(require_auth)):
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=tax-report-{year}.csv"},
     )
+
+
+# ── Transaction Search ───────────────────────────────────────
+
+@app.get("/api/transactions/search", summary="Search transactions with filters")
+async def search_transactions_endpoint(q: str = "", from_date: str = None, to_date: str = None,
+                                        min_amount: float = None, max_amount: float = None,
+                                        account_id: int = None, category_id: int = None,
+                                        limit: int = 50, offset: int = 0,
+                                        _auth: None = Depends(require_auth)):
+    txs = await db.search_transactions(q, from_date, to_date, min_amount, max_amount,
+                                        account_id, category_id, limit, offset)
+    return {"transactions": txs, "count": len(txs)}
 
 
 # ── Bank CSV Import ──────────────────────────────────────────
