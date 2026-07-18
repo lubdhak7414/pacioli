@@ -1076,7 +1076,6 @@ function handleAction(template) {
 }
 
 // ── Feature 4: Transaction History Tab ─────────────────────
-var txTabLoaded = false;
 
 async function loadTransactions() {
   var view = document.getElementById("transactionView");
@@ -1136,13 +1135,7 @@ async function showInteractiveReport(reportType, btn) {
     // Detect numeric columns
     var numCols = headers.map(function(h) { return /amount|debit|credit|total|balance|net/i.test(h); });
 
-    function fmtNum(v) {
-      if (!v || !v.trim()) return "";
-      var n = parseFloat(v.replace(/[$,]/g, ""));
-      if (isNaN(n)) return escHtml(v);
-      return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
-
+    
     var sortCol = -1, sortAsc = true;
 
     function renderTable() {
