@@ -13,6 +13,33 @@ var currentProposalId = null;
 var historyOpen = false;
 var _confirmTimeout = null;
 var _pendingHighlight = null;
+var _isPinnedToBottom = true;
+var selectedDate = null;
+
+// ── Session persistence ──────────────────────────────────────────
+function saveSession() {
+  try {
+    sessionStorage.setItem("pacioli_proposalId", currentProposalId || "");
+    sessionStorage.setItem("pacioli_historyOpen", historyOpen ? "1" : "0");
+    sessionStorage.setItem("pacioli_selectedDate", selectedDate || "");
+  } catch (e) {}
+}
+
+function loadSession() {
+  try {
+    var pid = sessionStorage.getItem("pacioli_proposalId");
+    if (pid) currentProposalId = parseInt(pid) || null;
+    historyOpen = sessionStorage.getItem("pacioli_historyOpen") === "1";
+    var sd = sessionStorage.getItem("pacioli_selectedDate");
+    if (sd) selectedDate = sd;
+  } catch (e) {}
+}
+
+// Track scroll position — only auto-scroll when user is near the bottom
+chatMessages.addEventListener("scroll", function() {
+  var threshold = 80;
+  _isPinnedToBottom = chatMessages.scrollTop + chatMessages.clientHeight >= chatMessages.scrollHeight - threshold;
+});
 
 // ── Auth ─────────────────────────────────────────────────────────
 function getApiKey() {
@@ -239,7 +266,9 @@ function addMessage(role, text, proposalId, skipHidePrompts) {
 
   wrapper.innerHTML = contentHtml;
   chatMessages.appendChild(wrapper);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  if (_isPinnedToBottom) {
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
 }
 
 // Copy message to clipboard
@@ -304,7 +333,7 @@ function showTyping() {
       '<span id="typingCaption" class="text-xs text-gray-500 ml-2 hidden"></span>' +
     '</div>';
   chatMessages.appendChild(el);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  if (_isPinnedToBottom) chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 function hideTyping() {
@@ -356,7 +385,7 @@ chatForm.addEventListener("submit", async function(e) {
     if (_requestAborted) return;
     addMessage("assistant", data.assistant_message, data.proposal_id);
 
-    // Add CSV/XLSX download buttons for reports
+    // Add CSV/XLSX download buttons and interactive view for reports
     if (data.assistant_message && !data.proposal_id) {
       var lower = data.assistant_message.toLowerCase();
       var reportType = null;
@@ -367,12 +396,13 @@ chatForm.addEventListener("submit", async function(e) {
         var wrapper = document.createElement("div");
         wrapper.className = "fade-up flex gap-3";
         wrapper.innerHTML = '<div class="w-7 h-7 shrink-0"></div>' +
-          '<div class="flex gap-2">' +
+          '<div class="flex gap-2 flex-wrap">' +
+            '<button onclick="showInteractiveReport(\'' + reportType + '\', this)" class="btn-ghost text-xs px-3 py-1.5 rounded-lg">&#128202; Interactive</button>' +
             '<a href="/api/reports/' + reportType + '/csv" class="btn-ghost text-xs px-3 py-1.5 rounded-lg" download>&#128229; CSV</a>' +
             '<a href="/api/reports/' + reportType + '/xlsx" class="btn-ghost text-xs px-3 py-1.5 rounded-lg" download>&#128229; XLSX</a>' +
           '</div>';
         chatMessages.appendChild(wrapper);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        if (_isPinnedToBottom) chatMessages.scrollTop = chatMessages.scrollHeight;
       }
     }
 
@@ -397,6 +427,7 @@ async function loadProposal(id) {
     var p = await res.json();
 
     currentProposalId = p.status === "pending" ? id : null;
+    saveSession();
 
     switchTab("proposal");
     proposalEmpty.classList.add("hidden");
@@ -549,8 +580,9 @@ async function approveProposal(id) {
       addMessage("assistant", "Proposal #" + id + " approved — " + (data.change_log ? data.change_log.length : 0) + " cell(s) updated.", id);
       showToast("Proposal approved and executed", "success", function() { restoreProposal(id); });
       currentProposalId = null;
+      saveSession();
       if (!historyOpen) toggleHistory();
-      else loadHistory();
+      else loadHistory(true);
       loadProposal(id);
     } else {
       btns.innerHTML = '<p class="text-sm text-ledger-danger">Execution failed</p>';
@@ -587,8 +619,9 @@ async function rejectProposal(id) {
       addMessage("assistant", "Proposal #" + id + " rejected. No edits were made.");
       showToast("Proposal rejected", "info");
       currentProposalId = null;
+      saveSession();
       if (!historyOpen) toggleHistory();
-      else loadHistory();
+      else loadHistory(true);
       loadProposal(id);
     }
   } catch (err) {
@@ -598,18 +631,29 @@ async function rejectProposal(id) {
 }
 
 // Past proposals history panel
-async function loadHistory() {
+var _historyOffset = 0;
+var _allProposals = [];
+
+async function loadHistory(reset) {
+  if (reset) { _historyOffset = 0; _allProposals = []; }
   var panel = document.getElementById("historyPanel");
-  panel.innerHTML = '<p class="text-xs animate-pulse" style="color: var(--text-muted);">Loading...</p>';
+  if (_historyOffset === 0) {
+    panel.innerHTML = '<p class="text-xs animate-pulse" style="color: var(--text-muted);">Loading...</p>';
+  }
   try {
-    var res = await apiFetch("/api/proposals?limit=10");
+    var res = await apiFetch("/api/proposals?limit=10&offset=" + _historyOffset);
     var data = await res.json();
     var proposals = data.proposals || [];
-    if (proposals.length === 0) {
+    var total = data.total || 0;
+    _allProposals = _allProposals.concat(proposals);
+    _historyOffset += proposals.length;
+
+    if (_allProposals.length === 0) {
       panel.innerHTML = '<p class="text-xs text-gray-600">No proposals yet.</p>';
       return;
     }
-    panel.innerHTML = proposals.map(function(p) {
+
+    var html = _allProposals.map(function(p) {
       var truncated = p.user_message.length > 55
         ? p.user_message.slice(0, 55) + "..."
         : p.user_message;
@@ -621,19 +665,43 @@ async function loadHistory() {
         '</div>'
       );
     }).join("");
+
+    if (_historyOffset < total) {
+      html += '<button onclick="loadHistory()" class="w-full text-xs py-2 mt-1 rounded-lg" style="color: var(--primary);">Load more (' + _historyOffset + ' of ' + total + ')</button>';
+    }
+
+    panel.innerHTML = html;
   } catch (err) {
     panel.innerHTML = '<p class="text-xs text-ledger-danger">Failed to load history.</p>';
   }
 }
 
+function filterHistory(query) {
+  var panel = document.getElementById("historyPanel");
+  var items = panel.querySelectorAll(".history-item");
+  var q = (query || "").toLowerCase();
+  var visible = 0;
+  items.forEach(function(item) {
+    var text = item.textContent.toLowerCase();
+    var match = !q || text.includes(q);
+    item.style.display = match ? "" : "none";
+    if (match) visible++;
+  });
+  // Show/hide load more button based on filter
+  var loadMore = panel.querySelector("button");
+  if (loadMore && q) loadMore.style.display = "none";
+  else if (loadMore) loadMore.style.display = "";
+}
+
 function toggleHistory() {
   historyOpen = !historyOpen;
+  saveSession();
   var panel = document.getElementById("historyPanel");
   var arrow = document.getElementById("historyArrow");
   if (historyOpen) {
     panel.classList.remove("hidden");
     arrow.innerHTML = "&#9660;";
-    loadHistory();
+    loadHistory(true);
   } else {
     panel.classList.add("hidden");
     arrow.innerHTML = "&#9654;";
@@ -698,12 +766,29 @@ async function loadLedgerPreview(sheet) {
       return;
     }
 
-    var thead = '<tr>' + data.headers.map(function(h) {
-      return '<th class="text-left px-2 py-1 border-b border-ledger-border font-medium sticky top-0 bg-ledger-surface" style="color: var(--text-muted);">' + escHtml(h) + '</th>';
+    // Identify numeric columns by header name
+    var numHeaders = /^(Debit|Credit|Balance|Amount|Rate|Total)$/i;
+    var numericCols = data.headers.map(function(h) { return numHeaders.test(h); });
+
+    var thead = '<tr>' + data.headers.map(function(h, i) {
+      var cls = numericCols[i]
+        ? "text-right px-2 py-1 border-b border-ledger-border font-medium sticky top-0 bg-ledger-surface"
+        : "text-left px-2 py-1 border-b border-ledger-border font-medium sticky top-0 bg-ledger-surface";
+      return '<th class="' + cls + '" style="color: var(--text-muted);">' + escHtml(h) + '</th>';
     }).join("") + '</tr>';
 
+    function fmtNum(v) {
+      if (v == null || v === "") return "";
+      var n = parseFloat(v);
+      if (isNaN(n)) return escHtml(v);
+      return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
     var tbody = data.rows.map(function(row) {
-      return '<tr class="hover:bg-ledger-surface/50">' + row.map(function(cell) {
+      return '<tr class="hover:bg-ledger-surface/50">' + row.map(function(cell, i) {
+        if (numericCols[i]) {
+          return '<td class="px-2 py-1 border-b border-ledger-border/40 font-mono text-right" style="color: var(--text-secondary); font-variant-numeric: tabular-nums;">' + fmtNum(cell) + '</td>';
+        }
         return '<td class="px-2 py-1 border-b border-ledger-border/40 font-mono" style="color: var(--text-secondary);">' + escHtml(cell == null ? "" : cell) + '</td>';
       }).join("") + '</tr>';
     }).join("");
@@ -756,7 +841,7 @@ async function restoreProposal(id) {
       showToast("Ledger restored (before #" + id + ")", "success");
       addMessage("assistant", "Ledger restored to the state before proposal #" + id + ".");
       if (!document.getElementById("ledgerView").classList.contains("hidden")) loadLedgerPreview();
-      if (historyOpen) loadHistory();
+      if (historyOpen) loadHistory(true);
     } else {
       showToast(data.detail || data.message || "Restore failed", "error");
     }
@@ -900,7 +985,6 @@ document.addEventListener("click", function(e) {
 });
 
 // ── Feature 5: Date Shortcuts ──────────────────────────────
-var selectedDate = null;
 
 function formatDate(d) {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
@@ -922,6 +1006,7 @@ function setDateShortcut(preset, event) {
     d.setDate(d.getDate() - d.getDay() - 7);
   }
   selectedDate = formatDate(d);
+  saveSession();
   // Highlight active button
   document.querySelectorAll(".date-shortcut").forEach(function(el) { el.classList.remove("active"); });
   event.target.classList.add("active");
@@ -930,6 +1015,7 @@ function setDateShortcut(preset, event) {
 
 function setCustomDate(input) {
   selectedDate = input.value;
+  saveSession();
   document.querySelectorAll(".date-shortcut").forEach(function(el) { el.classList.remove("active"); });
   input.classList.add("active");
   showToast("Date set to " + selectedDate, "info");
@@ -1012,6 +1098,97 @@ async function loadTransactions() {
   }
 }
 
+// ── Interactive Report Rendering ─────────────────────────────
+async function showInteractiveReport(reportType, btn) {
+  btn.disabled = true;
+  btn.textContent = "Loading...";
+  try {
+    var res = await apiFetch("/api/reports/" + reportType + "/csv");
+    var text = await res.text();
+    var lines = text.trim().split("\n");
+    if (lines.length < 2) { btn.textContent = "No data"; return; }
+    var headers = lines[0].split(",");
+    var rows = [];
+    for (var i = 1; i < lines.length; i++) {
+      var cells = lines[i].split(",");
+      rows.push(cells);
+    }
+
+    // Detect numeric columns
+    var numCols = headers.map(function(h) { return /amount|debit|credit|total|balance|net/i.test(h); });
+
+    function fmtNum(v) {
+      if (!v || !v.trim()) return "";
+      var n = parseFloat(v.replace(/[$,]/g, ""));
+      if (isNaN(n)) return escHtml(v);
+      return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    var sortCol = -1, sortAsc = true;
+
+    function renderTable() {
+      var sorted = rows.slice();
+      if (sortCol >= 0) {
+        sorted.sort(function(a, b) {
+          var va = numCols[sortCol] ? parseFloat((a[sortCol] || "0").replace(/[$,]/g, "")) : (a[sortCol] || "").toLowerCase();
+          var vb = numCols[sortCol] ? parseFloat((b[sortCol] || "0").replace(/[$,]/g, "")) : (b[sortCol] || "").toLowerCase();
+          if (va < vb) return sortAsc ? -1 : 1;
+          if (va > vb) return sortAsc ? 1 : -1;
+          return 0;
+        });
+      }
+      var html = '<table class="w-full text-xs border-collapse report-table"><thead><tr>';
+      headers.forEach(function(h, i) {
+        var cls = numCols[i] ? "text-right px-2 py-1 border-b font-medium" : "text-left px-2 py-1 border-b font-medium";
+        var arrow = sortCol === i ? (sortAsc ? " &#9650;" : " &#9660;") : "";
+        html += '<th class="' + cls + '" style="cursor:pointer; color: var(--text-muted);" onclick="sortReport(' + i + ')">' + escHtml(h) + arrow + '</th>';
+      });
+      html += '</tr></thead><tbody>';
+      var isTotals = /^(total|net|grand)/i;
+      sorted.forEach(function(row) {
+        var rowClass = isTotals.test(row[0] || row[1] || "") ? "report-totals" : "";
+        html += '<tr class="' + rowClass + '">';
+        row.forEach(function(cell, i) {
+          if (numCols[i]) {
+            html += '<td class="text-right px-2 py-1 border-b font-mono" style="font-variant-numeric: tabular-nums;">' + fmtNum(cell) + '</td>';
+          } else {
+            html += '<td class="text-left px-2 py-1 border-b">' + escHtml((cell || "").trim()) + '</td>';
+          }
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table>';
+      document.getElementById("reportTableContainer").innerHTML = html;
+    }
+
+    window.sortReport = function(col) {
+      if (sortCol === col) sortAsc = !sortAsc;
+      else { sortCol = col; sortAsc = true; }
+      renderTable();
+    };
+
+    // Replace the button with the interactive table
+    var container = document.createElement("div");
+    container.className = "fade-up flex gap-3";
+    container.innerHTML =
+      '<div class="w-7 h-7 shrink-0"></div>' +
+      '<div class="flex-1">' +
+        '<div class="flex items-center justify-between mb-2">' +
+          '<span class="text-xs font-medium" style="color: var(--text-muted);">' + escHtml(headers.join(", ")) + '</span>' +
+          '<div class="flex gap-1">' +
+            '<a href="/api/reports/' + reportType + '/csv" class="text-xs px-2 py-1 rounded" style="color: var(--primary);" download>CSV</a>' +
+            '<a href="/api/reports/' + reportType + '/xlsx" class="text-xs px-2 py-1 rounded" style="color: var(--primary);" download>XLSX</a>' +
+          '</div>' +
+        '</div>' +
+        '<div id="reportTableContainer" class="overflow-x-auto rounded-lg border" style="border-color: var(--border);"></div>' +
+      '</div>';
+    btn.closest(".flex.gap-3").replaceWith(container);
+    renderTable();
+  } catch (err) {
+    btn.textContent = "Failed to load";
+  }
+}
+
 // ── Feature 2: Export Reports as CSV ───────────────────────
 function downloadReportCSV(reportType) {
   window.open("/api/reports/" + reportType + "/csv", "_blank");
@@ -1027,17 +1204,52 @@ function showImportModal() {
   modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
   modal.innerHTML =
     '<div class="modal-content">' +
-      '<h3 class="text-sm font-semibold text-white mb-3">Import Bank Transactions</h3>' +
-      '<p class="text-xs text-gray-500 mb-3">Paste CSV with columns: Date, Description, Amount</p>' +
-      '<textarea id="csvInput" rows="8" class="input-glow w-full rounded-lg px-3 py-2 text-xs font-mono mb-3" ' +
-        'style="background: var(--surface); border: 1px solid var(--border); color: var(--text-secondary); resize: vertical;" ' +
-        'placeholder="Date,Description,Amount&#10;2025-06-11,Office Supplies,-1200.00&#10;2025-06-12,Client Payment,3500.00"></textarea>' +
+      '<h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Import Bank Transactions</h3>' +
+      '<p class="text-xs mb-3" style="color: var(--text-muted);">Paste CSV with columns: <strong>Date, Description, Amount</strong></p>' +
+      '<textarea id="csvInput" rows="8" class="input-glow w-full rounded-lg px-3 py-2 text-xs font-mono mb-2" ' +
+        'style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary); resize: vertical;" ' +
+        'placeholder="Date,Description,Amount&#10;2025-06-11,Office Supplies,-1200.00&#10;2025-06-12,Client Payment,3500.00" ' +
+        'oninput="validateCSVImport()"></textarea>' +
+      '<div id="csvValidation" class="text-xs mb-3 min-h-[1.2em]"></div>' +
       '<div class="flex gap-2">' +
-        '<button onclick="submitCSVImport()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1">Import & Propose</button>' +
+        '<button id="csvImportBtn" onclick="submitCSVImport()" class="btn-primary px-4 py-2 rounded-lg text-xs flex-1" disabled>Import & Propose</button>' +
         '<button onclick="document.getElementById(\'importModal\').remove()" class="btn-ghost px-4 py-2 rounded-lg text-xs">Cancel</button>' +
       '</div>' +
     '</div>';
   document.body.appendChild(modal);
+}
+
+function validateCSVImport() {
+  var input = document.getElementById("csvInput");
+  var status = document.getElementById("csvValidation");
+  var btn = document.getElementById("csvImportBtn");
+  if (!input || !status) return;
+  var csv = input.value.trim();
+  if (!csv) {
+    status.innerHTML = '<span style="color: var(--text-muted);">Paste your CSV data above</span>';
+    btn.disabled = true;
+    return;
+  }
+  var lines = csv.split("\n").filter(function(l) { return l.trim(); });
+  var valid = 0, invalid = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var parts = lines[i].split(",").map(function(p) { return p.trim(); });
+    if (parts.length >= 3 && /^\d{4}-\d{2}-\d{2}$/.test(parts[0]) && !isNaN(parseFloat(parts[2]))) {
+      valid++;
+    } else {
+      invalid++;
+    }
+  }
+  if (valid > 0 && invalid === 0) {
+    status.innerHTML = '<span style="color: #16a34a;">&#10003; ' + valid + ' valid transaction(s) ready</span>';
+    btn.disabled = false;
+  } else if (valid > 0) {
+    status.innerHTML = '<span style="color: #d97706;">&#9888; ' + valid + ' valid, ' + invalid + ' invalid row(s) (will be skipped)</span>';
+    btn.disabled = false;
+  } else {
+    status.innerHTML = '<span style="color: #e11d48;">&#10005; No valid rows found. Use format: Date,Description,Amount</span>';
+    btn.disabled = true;
+  }
 }
 
 async function submitCSVImport() {
@@ -1144,3 +1356,16 @@ switchTab = function(tab) {
 
 // Initialize action buttons on load
 renderActionButtons();
+
+// Restore session state on page refresh
+loadSession();
+if (historyOpen) {
+  var panel = document.getElementById("historyPanel");
+  var arrow = document.getElementById("historyArrow");
+  if (panel) panel.classList.remove("hidden");
+  if (arrow) arrow.innerHTML = "&#9660;";
+  loadHistory();
+}
+if (currentProposalId) {
+  loadProposal(currentProposalId);
+}

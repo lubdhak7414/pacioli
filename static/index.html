@@ -195,7 +195,11 @@
             <span id="historyArrow" class="transition-transform" style="color: var(--text-muted);">&#9654;</span>
             <span>Past Proposals</span>
           </button>
-          <div id="historyPanel" class="hidden mt-3 space-y-1.5 max-h-72 overflow-y-auto chat-scroll"></div>
+          <div id="historyPanel" class="hidden mt-3 space-y-1.5 max-h-72 overflow-y-auto chat-scroll">
+            <input type="text" id="historySearch" placeholder="Search proposals..." oninput="filterHistory(this.value)"
+              class="w-full text-xs px-2 py-1.5 rounded-lg mb-2"
+              style="background: var(--surface); border: 1px solid var(--border); color: var(--text-primary);" />
+          </div>
         </div>
       </div>
     </div>
